@@ -208,13 +208,13 @@ $\psi_i = (h_i - h_0) - T_0 (s_i - s_0)$
 
 1.  **熱媒体の物性値**:
     熱媒体の密度 $\rho_{htf}$ と定圧比熱 $C_{p,htf}$ を $T_{htf,in}$ と $P_{htf}$ (熱媒体圧力) で評価します。
-    $\rho_{htf} = \text{PropsSI}("Dmass", "T", T_{htf,in}, "P", P_{htf}, \text{fluid\_htf})$
-    $C_{p,htf} = \text{PropsSI}("Cpmass", "T", T_{htf,in}, "P", P_{htf}, \text{fluid\_htf}) \quad [\text{J/(kg*K)}]$
+    $\rho_{htf} = \text{PropsSI}("Dmass", "T", T\_{htf,in}, "P", P\_{htf}, \text{fluid\_htf})$
+    $C_{p,htf} = \text{PropsSI}("Cpmass", "T", T\_{htf,in}, "P", P\_{htf}, \text{fluid\_htf}) \quad [\text{J/(kg*K)}]$
 2.  **熱媒体の質量流量 $\dot{m}_{htf}$**:
     $\dot{m}_{htf} = \rho_{htf} \cdot \dot{V}_{htf}$
 3.  **ORC蒸発器の飽和温度 $T_{sat,evap}$**:
-    指定されたピンチポイント温度差 $\Delta T_{pinch}$ (K) と過熱度 $\Delta T_{superheat}$ (K) を用いて、
-    $T_{sat,evap} = T_{htf,in} - \Delta T_{pinch} - \Delta T_{superheat}$
+    指定されたピンチポイント温度差 $\Delta T\_{pinch}$ (K) と過熱度 $\Delta T\_{superheat}$ (K) を用いて、
+    $T_{sat,evap} = T_{htf,in} - \Delta T\_{pinch} - \Delta T\_{superheat}$
     もし $T_{sat,evap} \le T_{cond} + 1.0$ K ならば、サイクルは成立しないと判断されます。
 4.  **ORC蒸発圧力 $P_{evap}$**:
     $P_{evap} = \text{PropsSI}("P", "T", T_{sat,evap}, "Q", 1, \text{fluid\_orc})$ (ORC作動流体の飽和蒸気圧力)
