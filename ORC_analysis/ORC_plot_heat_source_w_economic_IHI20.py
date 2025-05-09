@@ -14,22 +14,6 @@ from ORC_Analysis import (
 # Economic.pyから経済分析関数をインポート
 from Economic import evaluate_orc_economics, capital_recovery_factor
 
-def get_unique_filename(base_filename): # ユニークなファイル名を生成する関数を定義
-    """
-    Generates a unique filename by appending a number if the file already exists.
-    e.g., 'report.txt' -> 'report_1.txt' -> 'report_2.txt'
-    """
-    if not os.path.exists(base_filename):
-        return base_filename
-
-    name, ext = os.path.splitext(base_filename)
-    i = 1
-    while True:
-        new_filename = f"{name}_{i}{ext}"
-        if not os.path.exists(new_filename):
-            return new_filename
-        i += 1
-
 # --------------------------------------------------
 # 1. 設定
 # --------------------------------------------------
@@ -62,7 +46,11 @@ maint_factor = 1.06   # メンテナンスファクター
 # ベースファイル名を定義（全出力ファイルで共通）
 # 熱源流量を追加（配列の最初の値を使用）
 # base_filename = f"ORC_analysis_{fluid_orc}_HTF{int(T_htf_max_C)}C_V{int(Vdot_values_m3h[0])}"  # 変更点
-base_filename = f"ORC_analysis_IHI20"  
+base_filename = f"ORC_analysis_IHI20"
+
+# 出力ディレクトリを指定
+output_dir = "result"
+os.makedirs(output_dir, exist_ok=True) # フォルダが存在しない場合は作成
 
 # 追加: シリーズORC運転フラグ
 two_stage = True  # True にすると 2台直列ORC をシミュレーション
@@ -452,7 +440,7 @@ if two_stage and results_series_df is not None:
     axes1[0].legend(title="熱源流量／運転モード")
 
 plt.tight_layout()
-filename1 = get_unique_filename(f"{base_filename}_performance.png")  # 変更
+filename1 = os.path.join(output_dir, f"{base_filename}_performance.png")
 plt.savefig(filename1, dpi=300)
 print(f"性能プロットを {filename1} に保存しました。")
 
@@ -523,7 +511,7 @@ if econ_df is not None and not econ_df.empty:
     ax3_econ.legend(title="構成／熱源流量")
     
     plt.tight_layout()
-    filename2 = get_unique_filename(f"{base_filename}_economic.png")  # 変更
+    filename2 = os.path.join(output_dir, f"{base_filename}_economic.png")
     plt.savefig(filename2, dpi=300)
     print(f"経済性プロットを {filename2} に保存しました。")
     
@@ -550,7 +538,7 @@ if econ_df is not None and not econ_df.empty:
             ax_series.grid(True, axis='y')
             
             plt.tight_layout()
-            filename3_series = get_unique_filename(f"{base_filename}_component_costs_series.png")
+            filename3_series = os.path.join(output_dir, f"{base_filename}_component_costs_series.png")
             plt.savefig(filename3_series, dpi=300)
             print(f"2台直列コンポーネント別コストプロットを {filename3_series} に保存しました。")
 
@@ -578,30 +566,30 @@ if econ_df is not None and not econ_df.empty:
             ax.grid(True, axis='y')
             
             plt.tight_layout()
-            filename3 = get_unique_filename(f"{base_filename}_component_costs.png")
+            filename3 = os.path.join(output_dir, f"{base_filename}_component_costs.png")
             plt.savefig(filename3, dpi=300)
             print(f"コンポーネント別コストプロットを {filename3} に保存しました。")
 
 # 計算結果をCSVファイルに出力
-csv_filename = get_unique_filename(f"{base_filename}_performance.csv")  # 変更
+csv_filename = os.path.join(output_dir, f"{base_filename}_performance.csv")
 results_df.to_csv(csv_filename, index=False, encoding='utf-8-sig')
 print(f"性能計算結果を {csv_filename} に保存しました。")
 
 # 経済計算結果をCSVファイルに出力（結果が存在する場合）
 if econ_df is not None and not econ_df.empty:
-    econ_csv_filename = get_unique_filename(f"{base_filename}_economic.csv")  # 変更
+    econ_csv_filename = os.path.join(output_dir, f"{base_filename}_economic.csv")
     econ_df.to_csv(econ_csv_filename, index=False, encoding='utf-8-sig')
     print(f"経済計算結果を {econ_csv_filename} に保存しました。")
 
 # ---- 追加: 2台直列の結果をCSVに出力 ----
 # 2台直列の性能計算結果をCSVファイルに出力 (結果が存在する場合)
 if two_stage and results_series_df is not None and not results_series_df.empty:
-    series_perf_csv_filename = get_unique_filename(f"{base_filename}_performance_series.csv")
+    series_perf_csv_filename = os.path.join(output_dir, f"{base_filename}_performance_series.csv")
     results_series_df.to_csv(series_perf_csv_filename, index=False, encoding='utf-8-sig')
     print(f"2台直列 性能計算結果を {series_perf_csv_filename} に保存しました。")
 
 # 2台直列の経済計算結果をCSVファイルに出力 (結果が存在する場合)
 if two_stage and econ_series_df is not None and not econ_series_df.empty:
-    series_econ_csv_filename = get_unique_filename(f"{base_filename}_economic_series.csv")
+    series_econ_csv_filename = os.path.join(output_dir, f"{base_filename}_economic_series.csv")
     econ_series_df.to_csv(series_econ_csv_filename, index=False, encoding='utf-8-sig')
     print(f"2台直列 経済計算結果を {series_econ_csv_filename} に保存しました。")
