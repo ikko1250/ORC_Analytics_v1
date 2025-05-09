@@ -12,22 +12,6 @@ from ORC_Analysis import (
 # Economic.pyから経済分析関数をインポート
 from Economic import evaluate_orc_economics
 
-def get_unique_filename(base_filename): # ユニークなファイル名を生成する関数を定義
-    """
-    Generates a unique filename by appending a number if the file already exists.
-    e.g., 'report.txt' -> 'report_1.txt' -> 'report_2.txt'
-    """
-    if not os.path.exists(base_filename):
-        return base_filename
-
-    name, ext = os.path.splitext(base_filename)
-    i = 1
-    while True:
-        new_filename = f"{name}_{i}{ext}"
-        if not os.path.exists(new_filename):
-            return new_filename
-        i += 1
-
 # --- Helper functions for NaN dictionaries (from Plot_IHIdual.py) ---
 def get_nan_perf_dict(T_htf_in_C, Vdot_m3s):
     return {
@@ -237,7 +221,7 @@ plot_lines(axes1[3], results_df, "T_htf_in [°C]", "ε_ex [-]", sweep_cfg["Vdot_
 setup_axis(axes1[3], "熱源入口温度 [°C]", "エクセルギー効率 ε [-]", "熱源流量")
 
 plt.tight_layout()
-filename1 = get_unique_filename(f"{run_cfg['base_filename']}_performance.png")
+filename1 = f"{run_cfg['base_filename']}_performance.png"
 plt.savefig(filename1, dpi=300)
 print(f"性能プロットを {filename1} に保存しました。")
 plt.close(fig1)
@@ -264,7 +248,7 @@ if econ_df is not None and not econ_df.empty:
     setup_axis(axes2[2], "熱源入口温度 [°C]", "単純回収期間 [年]", "熱源流量")
 
     plt.tight_layout()
-    filename2 = get_unique_filename(f"{run_cfg['base_filename']}_economic.png")
+    filename2 = f"{run_cfg['base_filename']}_economic.png"
     plt.savefig(filename2, dpi=300)
     print(f"経済性プロットを {filename2} に保存しました。")
     plt.close(fig2)
@@ -292,7 +276,7 @@ if econ_df is not None and not econ_df.empty:
             
             setup_axis(ax, "熱源入口温度 [°C]", ylabel_text, "コンポーネント")
             plt.tight_layout()
-            fname = get_unique_filename(f"{base_fname}_{filename_suffix}.png")
+            fname = f"{base_fname}_{filename_suffix}.png"
             plt.savefig(fname, dpi=300)
             print(f"{fig_title_prefix}コンポーネント別コストプロットを {fname} に保存しました。")
         else:
@@ -305,12 +289,12 @@ if econ_df is not None and not econ_df.empty:
                       run_cfg['base_filename'], plot_cfg["fig3_size"])
 
 # 計算結果をCSVファイルに出力
-csv_filename_perf = get_unique_filename(f"{run_cfg['base_filename']}_performance.csv")
+csv_filename_perf = f"{run_cfg['base_filename']}_performance.csv"
 results_df.to_csv(csv_filename_perf, index=False, encoding='utf-8-sig')
 print(f"性能計算結果を {csv_filename_perf} に保存しました。")
 
 # 経済計算結果をCSVファイルに出力（結果が存在する場合）
 if econ_df is not None and not econ_df.empty:
-    econ_csv_filename = get_unique_filename(f"{run_cfg['base_filename']}_economic.csv")
+    econ_csv_filename = f"{run_cfg['base_filename']}_economic.csv"
     econ_df.to_csv(econ_csv_filename, index=False, encoding='utf-8-sig')
     print(f"経済計算結果を {econ_csv_filename} に保存しました。")
