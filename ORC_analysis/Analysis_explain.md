@@ -217,7 +217,7 @@ $\psi_i = (h_i - h_0) - T_0 (s_i - s_0)$
     $`T_{sat,evap} = T_{htf,in} - \Delta T\_{pinch} - \Delta T\_{superheat}`$
     もし $T_{sat,evap} \le T_{cond} + 1.0$ K ならば、サイクルは成立しないと判断されます。
 4.  **ORC蒸発圧力 $P_{evap}$**:
-    $P_{evap} = \text{PropsSI}("P", "T", T_{sat,evap}, "Q", 1, \text{fluid\_orc})$ (ORC作動流体の飽和蒸気圧力)
+    $`P_{evap} = \text{PropsSI}("P", "T", T_{sat,evap}, "Q", 1, \text{fluid\_orc})`$ (ORC作動流体の飽和蒸気圧力)
 5.  **タービン入口温度 $T_{turb,in}$**:
     $T_{turb,in} = T_{sat,evap} + \Delta T_{superheat}$
 6.  **熱媒体の出口温度 $T_{htf,out}$**:
