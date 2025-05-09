@@ -208,8 +208,8 @@ $\psi_i = (h_i - h_0) - T_0 (s_i - s_0)$
 
 1.  **熱媒体の物性値**:
     熱媒体の密度 $\rho_{htf}$ と定圧比熱 $C_{p,htf}$ を $T_{htf,in}$ と $P_{htf}$ (熱媒体圧力) で評価します。
-    $\rho_{htf} = \text{PropsSI}("Dmass", "T", T\_{htf,in}, "P", P\_{htf}, \text{fluid\_htf})$
-    $C\_{p,htf} = \text{PropsSI}("Cpmass", "T", T\_{htf,in}, "P", P\_{htf}, \text{fluid\_htf}) \quad [\text{J/(kg*K)}]$
+    $`\rho_{htf} = \text{PropsSI}("Dmass", "T", T\_{htf,in}, "P", P\_{htf}, \text{fluid\_htf})`$
+    $`C\_{p,htf} = \text{PropsSI}("Cpmass", "T", T\_{htf,in}, "P", P\_{htf}, \text{fluid\_htf}) \quad [\text{J/(kg*K)}]`$
 2.  **熱媒体の質量流量 $\dot{m}_{htf}$**:
     $\dot{m}_{htf} = \rho_{htf} \cdot \dot{V}_{htf}$
 3.  **ORC蒸発器の飽和温度 $T_{sat,evap}$**:
