@@ -91,26 +91,52 @@ def area_from_duty(Q_kW: float, U: float, lmtd_K: float) -> float:
     return Q_kW / (U * lmtd_K)
 
 
-def _pec_evap(area: float) -> float:        # Z = 130(A/0.093)^0.78
+# ─── Component-specific PEC calculation functions ───────────────────────
+# These functions calculate Purchased Equipment Cost (PEC) based on area (m²)
+# for heat exchangers, or power (kW) for turbine and pump.
+# Formulas from Table 5 of the reference paper.
+
+def _calculate_pec_heat_exchanger_common(area: float) -> float:
+    """PEC [$] for Evaporator, Superheater, Preheater.
+    Formula: 130 * (Area_m2 / 0.093)^0.78
+    """
+    if area <= 0:  # Avoid math errors for non-existent or zero-area components
+        return 0.0
     return 130.0 * (area / 0.093) ** 0.78
 
-def _pec_superheater(area: float) -> float:  # same corr. as evap.
-    return 130.0 * (area / 0.093) ** 0.78
-
-def _pec_preheater(area: float) -> float:    # same corr. as evap.
-    return 130.0 * (area / 0.093) ** 0.78
-
-def _pec_regenerator(area: float) -> float:  # Z = 2681 A^0.59
+def _calculate_pec_regenerator(area: float) -> float:
+    """PEC [$] for Regenerator.
+    Formula: 2681 * Area_m2^0.59
+    """
+    if area <= 0:
+        return 0.0
     return 2681.0 * area ** 0.59
 
-def _pec_condenser(area: float) -> float:    # Z = 1773 A^0.8 (approx.)
+def _calculate_pec_condenser(area: float) -> float:
+    """PEC [$] for Condenser.
+    Formula: 1773 * Area_m2^0.80 (approx.)
+    """
+    if area <= 0:
+        return 0.0
     return 1773.0 * area ** 0.80
 
-def _pec_turbine(W_kW: float) -> float:      # Z = 6000 W^0.7
+def _calculate_pec_turbine(W_kW: float) -> float:
+    """PEC [$] for Turbine.
+    Formula: 6000 * Power_kW^0.70
+    """
+    if W_kW <= 0: # Turbine power should be positive (produced)
+        return 0.0
     return 6000.0 * W_kW ** 0.70
 
-def _pec_pump(W_kW: float) -> float:         # Z = 3540 W^0.7
+def _calculate_pec_pump(W_kW: float) -> float:
+    """PEC [$] for Pump.
+    Formula: 3540 * Power_kW^0.70
+    """
+    # Pump power (W_p) from thermo model is positive (work input)
+    if W_kW <= 0:
+        return 0.0
     return 3540.0 * W_kW ** 0.70
+
 
 
 # ─── Public API ──────────────────────────────────────────────────────────
@@ -180,48 +206,61 @@ def evaluate_orc_economics(
     # 3) Purchased‑equipment cost per component –––––––––––––––––––––––––
     cost_rows = {}
 
-    # Evaporator
-    Q_e, dT_e = duties.get("Evaporator", (0.0, 1.0))
-    A_e = area_from_duty(Q_e, U_VALUES["Evaporator"], dT_e)
-    cost_rows["Evaporator"] = {
-        "Q [kW]": Q_e,
-        "A [m²]": A_e,
-        "PEC [$]": _pec_evap(A_e),
+    # Dispatch dictionary for PEC calculation functions
+    # Maps component name to its specific PEC calculation function.
+    # Heat exchanger functions expect area (m²), power component functions expect power (kW).
+    COMPONENT_PEC_CALCULATORS = {
+        "Evaporator": _calculate_pec_heat_exchanger_common,
+        "Superheater": _calculate_pec_heat_exchanger_common,
+        "Preheater": _calculate_pec_heat_exchanger_common,
+        "Regenerator": _calculate_pec_regenerator,
+        "Condenser": _calculate_pec_condenser,
+        "Turbine": _calculate_pec_turbine,
+        "Pump": _calculate_pec_pump,
     }
 
-    # Condenser
-    Q_c, dT_c = duties.get("Condenser", (0.0, 1.0))
-    A_c = area_from_duty(Q_c, U_VALUES["Condenser"], dT_c)
-    cost_rows["Condenser"] = {
-        "Q [kW]": Q_c,
-        "A [m²]": A_c,
-        "PEC [$]": _pec_condenser(A_c),
-    }
+    # Calculate PEC for Heat Exchangers
+    # `duties` contains "Evaporator", "Condenser", and any valid `extra_duties`
+    for comp_name, (Q_kW, lmtd_K) in duties.items():
+        if comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
+            U_val = U_VALUES[comp_name]
+            area = area_from_duty(Q_kW, U_val, lmtd_K)
+            
+            pec_func = COMPONENT_PEC_CALCULATORS[comp_name]
+            pec = pec_func(area) 
+            
+            cost_rows[comp_name] = {
+                "Q [kW]": Q_kW,
+                "A [m²]": area,
+                "LMTD [K]": lmtd_K,
+                "U [kW/m²K]": U_val,
+                "PEC [$]": pec,
+            }
 
-    # Turbine & Pump (from power)
+    # Calculate PEC for Power Components (Turbine, Pump)
+    # Turbine
     W_t = comp_df.loc["Turbine", "W [kW]"]
+    if "Turbine" in COMPONENT_PEC_CALCULATORS:
+        pec_func_turb = COMPONENT_PEC_CALCULATORS["Turbine"]
+        pec_turb = pec_func_turb(W_t)
+        cost_rows["Turbine"] = {
+            "W [kW]": W_t,
+            "PEC [$]": pec_turb
+        }
+
+    # Pump
     W_p = comp_df.loc["Pump", "W [kW]"]
-    cost_rows["Turbine"] = {"W [kW]": W_t, "PEC [$]": _pec_turbine(W_t)}
-    cost_rows["Pump"]    = {"W [kW]": W_p, "PEC [$]": _pec_pump(W_p)}
+    if "Pump" in COMPONENT_PEC_CALCULATORS:
+        pec_func_pump = COMPONENT_PEC_CALCULATORS["Pump"]
+        pec_pump = pec_func_pump(W_p)
+        cost_rows["Pump"] = {
+            "W [kW]": W_p,
+            "PEC [$]": pec_pump
+        }
 
-    # Optional heat exchangers supplied by user – iterate to compute PECs
-    for comp, (Q_kW, lmtd) in duties.items():
-        if comp in ("Evaporator", "Condenser"):
-            continue
-        if comp not in U_VALUES:
-            continue
-        A = area_from_duty(Q_kW, U_VALUES[comp], lmtd)
-        if comp == "Superheater":
-            pec = _pec_superheater(A)
-        elif comp == "Regenerator":
-            pec = _pec_regenerator(A)
-        elif comp == "Preheater":
-            pec = _pec_preheater(A)
-        else:
-            continue
-        cost_rows[comp] = {"Q [kW]": Q_kW, "A [m²]": A, "PEC [$]": pec}
-
-    cost_df = pd.DataFrame(cost_rows).T.fillna(0.0)
+    standard_columns = ["Q [kW]", "LMTD [K]", "U [kW/m²K]", "A [m²]", "W [kW]", "PEC [$]"]
+    cost_df = pd.DataFrame.from_dict(cost_rows, orient='index')
+    cost_df = cost_df.reindex(columns=standard_columns).fillna(0.0)
 
     # 4) Aggregate economics ––––––––––––––––––––––––––––––––––––––––––––
     PEC_total = cost_df["PEC [$]"].sum()
@@ -270,4 +309,3 @@ if __name__ == "__main__":
     pd.options.display.max_columns = 10
     print("\nPurchased‑equipment costs (PEC):\n", res["component_costs"].round(2))
     print("\nEconomic summary:\n", res["summary"].round(4))
-
