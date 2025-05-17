@@ -32,23 +32,25 @@ PA_PER_BAR = 100000.0          # Conversion factor from Pascals to Bar
 # ---------------------------------------------------------------------------
 
 def lmtd_counter_current(T_hot_in, T_hot_out, T_cold_in, T_cold_out):
-    """Return logarithmic‑mean ΔT for a *counter‑current* heat exchanger.
-
-    Parameters
-    ----------
-    T_hot_in, T_hot_out : float
-        Hot‑stream inlet/outlet temperatures [K].
-    T_cold_in, T_cold_out : float
-        Cold‑stream inlet/outlet temperatures [K].
-
-    Notes
-    -----
-    • ΔTₗₘ = (ΔT₁ − ΔT₂) / ln(ΔT₁/ΔT₂); guards against division by zero.
-    """
+    """Return logarithmic‑mean ΔT for a *counter‑current* heat exchanger."""
     dT1 = T_hot_in  - T_cold_out  # high‑end approach
     dT2 = T_hot_out - T_cold_in   # low‑end approach
+
+    # --- ADDED: Temperature cross or invalid profile check ---
+    if dT1 <= 0 or dT2 <= 0:
+        raise ValueError(
+            f"Temperature cross or invalid profile detected in LMTD calculation. "
+            f"dT1 = {dT1:.2f} K, dT2 = {dT2:.2f} K. "
+            f"Inputs: T_hot_in={T_hot_in:.2f} K, T_hot_out={T_hot_out:.2f} K, "
+            f"T_cold_in={T_cold_in:.2f} K, T_cold_out={T_cold_out:.2f} K"
+        )
+    # -----------------------------------------------------------
+
+    # Existing guard against division by zero when dT1 is close to dT2
     if abs(dT1 - dT2) < 1e-9:
-        return dT1
+        return dT1 # or dT2, since they are almost equal
+
+    # Normal LMTD calculation
     return (dT1 - dT2) / np.log(dT1 / dT2)
 
 
