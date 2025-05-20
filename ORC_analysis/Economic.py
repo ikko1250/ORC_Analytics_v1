@@ -99,6 +99,7 @@ def area_from_duty(Q_kW: float, U: float, lmtd_K: float) -> float:
 def _calculate_pec_heat_exchanger_common(area: float) -> float:
     """PEC [$] for Evaporator, Superheater, Preheater.
     Formula: 130 * (Area_m2 / 0.093)^0.78
+    0.093は㎡ to  ft²の換算係数
     """
     if area <= 0:  # Avoid math errors for non-existent or zero-area components
         return 0.0

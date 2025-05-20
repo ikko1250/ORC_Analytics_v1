@@ -118,41 +118,41 @@ def calculate_orc_performance(
     """Return (ψ‑table, component‑table, cycle‑kpi) for a simple ORC."""
 
     # --- 3.1 Environmental reference state ---------------------------------
-    h0 = CP.PropsSI("H", "T", T0, "P", P0, fluid) / 1e3  # kJ/kg
-    s0 = CP.PropsSI("S", "T", T0, "P", P0, fluid) / J_PER_KJ  # kJ/kg·K
+    h0 = CP.PropsSI("HMASS", "T", T0, "P", P0, fluid) / 1e3  # kJ/kg
+    s0 = CP.PropsSI("SMASS", "T", T0, "P", P0, fluid) / J_PER_KJ  # kJ/kg·K
 
     # --- 3.2 Thermodynamic states ------------------------------------------
     states = {}
     # (1) condenser outlet (sat. liquid)
     T1 = T_cond
     P1 = _get_coolprop_property("P", fluid, T_K=T1, Q_frac=0)
-    h1 = _get_coolprop_property("H", fluid, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
-    s1 = _get_coolprop_property("S", fluid, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
+    h1 = _get_coolprop_property("HMASS", fluid, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
+    s1 = _get_coolprop_property("SMASS", fluid, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
     states["1"] = {"h": h1, "s": s1, "T": T1, "P": P1}
 
     # (2) pump outlet
     P2 = P_evap
     s2s = s1             # isentropic assumption
-    h2s = _get_coolprop_property("H", fluid, P_Pa=P2, S_J_per_kgK=s2s * J_PER_KJ, divisor=J_PER_KJ)
+    h2s = _get_coolprop_property("HMASS", fluid, P_Pa=P2, S_J_per_kgK=s2s * J_PER_KJ, divisor=J_PER_KJ)
     h2  = h1 + (h2s - h1) / eta_pump
     T2  = _get_coolprop_property("T", fluid, P_Pa=P2, H_J_per_kg=h2 * J_PER_KJ)
-    s2  = _get_coolprop_property("S", fluid, P_Pa=P2, H_J_per_kg=h2 * J_PER_KJ, divisor=J_PER_KJ)
+    s2  = _get_coolprop_property("SMASS", fluid, P_Pa=P2, H_J_per_kg=h2 * J_PER_KJ, divisor=J_PER_KJ)
     states["2"] = {"h": h2, "s": s2, "T": T2, "P": P2}
 
     # (3) turbine inlet (superheated or sat. vapour)
     T3 = T_turb_in
     P3 = P_evap
-    h3 = _get_coolprop_property("H", fluid, T_K=T3, P_Pa=P3, divisor=J_PER_KJ)
-    s3 = _get_coolprop_property("S", fluid, T_K=T3, P_Pa=P3, divisor=J_PER_KJ)
+    h3 = _get_coolprop_property("HMASS", fluid, T_K=T3, P_Pa=P3, divisor=J_PER_KJ)
+    s3 = _get_coolprop_property("SMASS", fluid, T_K=T3, P_Pa=P3, divisor=J_PER_KJ)
     states["3"] = {"h": h3, "s": s3, "T": T3, "P": P3}
 
     # (4) turbine outlet
     P4 = P1
     s4s = s3
-    h4s = _get_coolprop_property("H", fluid, P_Pa=P4, S_J_per_kgK=s4s * J_PER_KJ, divisor=J_PER_KJ)
+    h4s = _get_coolprop_property("HMASS", fluid, P_Pa=P4, S_J_per_kgK=s4s * J_PER_KJ, divisor=J_PER_KJ)
     h4  = h3 - eta_turb * (h3 - h4s)
     T4  = _get_coolprop_property("T", fluid, P_Pa=P4, H_J_per_kg=h4 * J_PER_KJ)
-    s4  = _get_coolprop_property("S", fluid, P_Pa=P4, H_J_per_kg=h4 * J_PER_KJ, divisor=J_PER_KJ)
+    s4  = _get_coolprop_property("SMASS", fluid, P_Pa=P4, H_J_per_kg=h4 * J_PER_KJ, divisor=J_PER_KJ)
     states["4"] = {"h": h4, "s": s4, "T": T4, "P": P4}
 
     # --- 3.3 Specific exergy ψ at each state --------------------------------
@@ -271,8 +271,8 @@ def calculate_orc_performance_from_heat_source(
 
         # Assuming T_htf_in is the average temperature for property calculation if not specified otherwise
         # For more accuracy, properties could be evaluated at mean temp or integrated
-        rho_htf = _get_coolprop_property("Dmass", fluid_htf, T_K=T_htf_in, P_Pa=P_htf)
-        Cpm_htf = _get_coolprop_property("Cpmass", fluid_htf, T_K=T_htf_in, P_Pa=P_htf) # J/kg.K
+        rho_htf = _get_coolprop_property("DMASS", fluid_htf, T_K=T_htf_in, P_Pa=P_htf)
+        Cpm_htf = _get_coolprop_property("CPMASS", fluid_htf, T_K=T_htf_in, P_Pa=P_htf) # J/kg.K
         m_htf = rho_htf * Vdot_htf
         T_htf_out = T_sat_evap + pinch_delta_K
         Q_available = m_htf * Cpm_htf * (T_htf_in - T_htf_out) / J_PER_KJ  # kW
@@ -282,11 +282,11 @@ def calculate_orc_performance_from_heat_source(
         # quick ORC enthalpy rise to estimate m_orc
         T1 = T_cond
         # P1 = _get_coolprop_property("P", fluid_orc, T_K=T1, Q_frac=0) # Not strictly needed for h1, s1
-        h1 = _get_coolprop_property("H", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
-        s1 = _get_coolprop_property("S", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
-        h2s = _get_coolprop_property("H", fluid_orc, P_Pa=P_evap, S_J_per_kgK=s1 * J_PER_KJ, divisor=J_PER_KJ)
+        h1 = _get_coolprop_property("HMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
+        s1 = _get_coolprop_property("SMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
+        h2s = _get_coolprop_property("HMASS", fluid_orc, P_Pa=P_evap, S_J_per_kgK=s1 * J_PER_KJ, divisor=J_PER_KJ)
         h2 = h1 + (h2s - h1) / eta_pump
-        h3 = _get_coolprop_property("H", fluid_orc, T_K=T_turb_in, P_Pa=P_evap, divisor=J_PER_KJ)
+        h3 = _get_coolprop_property("HMASS", fluid_orc, T_K=T_turb_in, P_Pa=P_evap, divisor=J_PER_KJ)
         delta_h_evap = h3 - h2
         if delta_h_evap <= 0:
             return None
