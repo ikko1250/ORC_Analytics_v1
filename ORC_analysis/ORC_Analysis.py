@@ -271,11 +271,11 @@ def calculate_orc_performance_from_heat_source(
 
         # Assuming T_htf_in is the average temperature for property calculation if not specified otherwise
         # For more accuracy, properties could be evaluated at mean temp or integrated
-        rho_htf = _get_coolprop_property("DMASS", fluid_htf, T_K=T_htf_in, P_Pa=P_htf)
-        Cpm_htf = _get_coolprop_property("CPMASS", fluid_htf, T_K=T_htf_in, P_Pa=P_htf) # J/kg.K
-        m_htf = rho_htf * Vdot_htf
-        T_htf_out = T_sat_evap + pinch_delta_K
-        Q_available = m_htf * Cpm_htf * (T_htf_in - T_htf_out) / J_PER_KJ  # kW
+        rho_htf = _get_coolprop_property("DMASS", fluid_htf, T_K=T_htf_in, P_Pa=P_htf) # 密度の計算
+        Cpm_htf = _get_coolprop_property("CPMASS", fluid_htf, T_K=T_htf_in, P_Pa=P_htf) # J/kg.K, 定圧比熱の計算
+        m_htf = rho_htf * Vdot_htf # 質量流量の計算
+        T_htf_out = T_sat_evap + pinch_delta_K # 出口温度の計算
+        Q_available = m_htf * Cpm_htf * (T_htf_in - T_htf_out) / J_PER_KJ  # kW, 熱量の計算
         if Q_available <= 0:
             return None
 
