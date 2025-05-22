@@ -99,7 +99,7 @@ config = {
         "fluid_orc": DEFAULT_FLUID,
         "fluid_htf": "Water",
         "superheat_C": 8.0,  # ORC過熱度
-        "pinch_delta_K": 10.0,
+        "pinch_delta_K": 10.0, # ピンチデルタ
     },
     "economic_params": {
         "interest_rate": 0.05,  # 金利 (5%)
