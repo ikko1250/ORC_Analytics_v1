@@ -263,8 +263,30 @@ def calculate_orc_performance_from_heat_source(
     try:
         superheat_K = superheat_C
         T_sat_evap = T_htf_in - pinch_delta_K - superheat_K
-        if T_sat_evap <= T_cond + 1.0:
-            return None
+
+        # --- 臨界温度・凝縮温度チェック ---
+
+        if not hasattr(calculate_orc_performance_from_heat_source, '_tcrit_cache'):
+            calculate_orc_performance_from_heat_source._tcrit_cache = {}
+
+        if fluid_orc not in calculate_orc_performance_from_heat_source._tcrit_cache:
+            # キャッシュにない場合：CoolProp で計算してキャッシュに保存
+            try:
+                Tcrit = CP.PropsSI("Tcrit", fluid_orc)
+                calculate_orc_performance_from_heat_source._tcrit_cache[fluid_orc] = Tcrit
+
+            except (ValueError, RuntimeError, KeyError) as e:
+                raise ValueError(f"Could not get critical temperature for fluid '{fluid_orc}': {str(e)}")
+        else:
+            Tcrit = calculate_orc_performance_from_heat_source._tcrit_cache[fluid_orc]
+
+        if T_sat_evap >= Tcrit or T_sat_evap <= T_cond + 1.0:
+            raise ValueError(
+                f"Calculated evaporator saturation temperature ({T_sat_evap:.2f} K) is invalid. "
+                f"It must be below critical temperature ({Tcrit:.2f} K) and above condenser temperature + 1K ({T_cond + 1.0:.2f} K). "
+                f"(Input T_htf_in: {T_htf_in:.2f} K, T_cond: {T_cond:.2f} K, pinch: {pinch_delta_K:.2f} K, superheat: {superheat_K:.2f} K)"
+            )
+        # --- 臨界温度・凝縮温度チェックここまで ---
 
         P_evap = _get_coolprop_property("P", fluid_orc, T_K=T_sat_evap, Q_frac=1)
         T_turb_in = T_sat_evap + superheat_K
