@@ -51,6 +51,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from ORC_analysis.config import get_component_setting
 
 # ─── import the thermodynamic routine ───────────────────────────────────
 try:
@@ -223,20 +224,29 @@ def evaluate_orc_economics(
     # Calculate PEC for Heat Exchangers
     # `duties` contains "Evaporator", "Condenser", and any valid `extra_duties`
     for comp_name, (Q_kW, lmtd_K) in duties.items():
-        if comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
+        # Preheater/Superheaterのトグル判定
+        if comp_name == "Preheater" and not get_component_setting('use_preheater', False):
+            pec = 0.0
+            area = 0.0
+            U_val = U_VALUES[comp_name]
+        elif comp_name == "Superheater" and not get_component_setting('use_superheater', False):
+            pec = 0.0
+            area = 0.0
+            U_val = U_VALUES[comp_name]
+        elif comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
             U_val = U_VALUES[comp_name]
             area = area_from_duty(Q_kW, U_val, lmtd_K)
-            
             pec_func = COMPONENT_PEC_CALCULATORS[comp_name]
-            pec = pec_func(area) 
-            
-            cost_rows[comp_name] = {
-                "Q [kW]": Q_kW,
-                "A [m²]": area,
-                "LMTD [K]": lmtd_K,
-                "U [kW/m²K]": U_val,
-                "PEC [$]": pec,
-            }
+            pec = pec_func(area)
+        else:
+            continue
+        cost_rows[comp_name] = {
+            "Q [kW]": Q_kW,
+            "A [m²]": area,
+            "LMTD [K]": lmtd_K,
+            "U [kW/m²K]": U_val,
+            "PEC [$]": pec,
+        }
 
     # Calculate PEC for Power Components (Turbine, Pump)
     # Turbine
@@ -284,6 +294,29 @@ def evaluate_orc_economics(
         }
     )
 
+    # 整合性チェック: ORC_Analysis.pyのトグル状態と一致しているか
+    from ORC_Analysis import calculate_orc_performance_from_heat_source
+    analysis_flags = {}
+    try:
+        # ダミー値で呼び出し（実際の計算値で呼ぶ場合は引数を調整）
+        dummy_result = calculate_orc_performance_from_heat_source(
+            T_htf_in=400.0, Vdot_htf=1.0, T_cond=300.0, eta_pump=0.7, eta_turb=0.8
+        )
+        if dummy_result is not None:
+            analysis_flags['use_preheater'] = dummy_result.get('use_preheater', None)
+            analysis_flags['use_superheater'] = dummy_result.get('use_superheater', None)
+    except Exception:
+        pass
+    # config.pyの値と比較
+    config_preheater = get_component_setting('use_preheater', False)
+    config_superheater = get_component_setting('use_superheater', False)
+    if (analysis_flags.get('use_preheater') is not None and
+        analysis_flags['use_preheater'] != config_preheater):
+        print("[警告] ORC_Analysis.pyとEconomic.pyでuse_preheaterの設定が一致していません！")
+    if (analysis_flags.get('use_superheater') is not None and
+        analysis_flags['use_superheater'] != config_superheater):
+        print("[警告] ORC_Analysis.pyとEconomic.pyでuse_superheaterの設定が一致していません！")
+
     return {
         "component_costs": cost_df,
         "summary": summary,
@@ -300,7 +333,7 @@ if __name__ == "__main__":
         eta_pump=0.75,
         eta_turb=0.80,
         m_orc=5.0,
-        # extra heat‑exchanger duties (kW, dT_LM[K]) – illustrative only
+        # extra heat‑exchangers duties (kW, dT_LM[K]) – illustrative only
         extra_duties={
             "Superheater": (200.0, 20.0),
             "Regenerator": (150.0, 15.0),
