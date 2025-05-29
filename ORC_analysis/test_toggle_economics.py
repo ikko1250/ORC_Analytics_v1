@@ -2,6 +2,7 @@
 ORC_Analysis/Economic.pyのpreheater/superheaterトグルのテスト
 """
 <<<<<<< HEAD
+<<<<<<< HEAD
 import io
 import sys
 from contextlib import redirect_stdout
@@ -14,15 +15,27 @@ FLOAT_TOLERANCE = 1e-6
 
 =======
 import sys
+=======
+>>>>>>> Implement review feedback improvements
 import io
+import sys
+from contextlib import redirect_stdout
+
 from ORC_analysis.config import set_component_setting, get_component_setting
 from ORC_analysis.Economic import evaluate_orc_economics
 
+<<<<<<< HEAD
 >>>>>>> Preheater/Superheaterトグル機能・テスト追加
+=======
+# Tolerance for floating point comparison
+FLOAT_TOLERANCE = 1e-6
+
+>>>>>>> Implement review feedback improvements
 def run_toggle_test(use_preheater, use_superheater):
     # トグル設定
     set_component_setting('use_preheater', use_preheater)
     set_component_setting('use_superheater', use_superheater)
+<<<<<<< HEAD
 <<<<<<< HEAD
     
     # 標準出力キャプチャ（context managerを使用）
@@ -34,6 +47,11 @@ def run_toggle_test(use_preheater, use_superheater):
     sys.stdout = buf
     try:
 >>>>>>> Preheater/Superheaterトグル機能・テスト追加
+=======
+    
+    # 標準出力キャプチャ（context managerを使用）
+    with redirect_stdout(io.StringIO()) as buf:
+>>>>>>> Implement review feedback improvements
         res = evaluate_orc_economics(
             P_evap=15.0e5,
             T_turb_in=450.0,
@@ -48,10 +66,13 @@ def run_toggle_test(use_preheater, use_superheater):
             },
         )
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
     finally:
         sys.stdout = sys_stdout
 >>>>>>> Preheater/Superheaterトグル機能・テスト追加
+=======
+>>>>>>> Implement review feedback improvements
     output = buf.getvalue()
     # コスト確認
     df = res["component_costs"]
@@ -61,6 +82,7 @@ def run_toggle_test(use_preheater, use_superheater):
     print(f"\n--- Test: use_preheater={use_preheater}, use_superheater={use_superheater} ---")
     print(f"Preheater cost: {pre_cost}")
     print(f"Superheater cost: {sup_cost}")
+<<<<<<< HEAD
 <<<<<<< HEAD
     
     # 浮動小数点の比較に許容誤差を使用
@@ -73,13 +95,22 @@ def run_toggle_test(use_preheater, use_superheater):
     if use_superheater and (sup_cost is None or abs(sup_cost) <= FLOAT_TOLERANCE):
 =======
     if not use_preheater and pre_cost != 0.0:
+=======
+    
+    # 浮動小数点の比較に許容誤差を使用
+    if not use_preheater and pre_cost is not None and abs(pre_cost) > FLOAT_TOLERANCE:
+>>>>>>> Implement review feedback improvements
         print("[ERROR] Preheater OFFなのにコストが0でない！")
-    if not use_superheater and sup_cost != 0.0:
+    if not use_superheater and sup_cost is not None and abs(sup_cost) > FLOAT_TOLERANCE:
         print("[ERROR] Superheater OFFなのにコストが0でない！")
-    if use_preheater and (pre_cost is None or pre_cost == 0.0):
+    if use_preheater and (pre_cost is None or abs(pre_cost) <= FLOAT_TOLERANCE):
         print("[ERROR] Preheater ONなのにコストが0！")
+<<<<<<< HEAD
     if use_superheater and (sup_cost is None or sup_cost == 0.0):
 >>>>>>> Preheater/Superheaterトグル機能・テスト追加
+=======
+    if use_superheater and (sup_cost is None or abs(sup_cost) <= FLOAT_TOLERANCE):
+>>>>>>> Implement review feedback improvements
         print("[ERROR] Superheater ONなのにコストが0！")
     # 警告出力確認
     if "警告" in output:

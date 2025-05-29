@@ -56,7 +56,10 @@ from ORC_analysis.config import get_component_setting
 
 # Setup logging
 logger = logging.getLogger(__name__)
+<<<<<<< HEAD
 from ORC_analysis.config import get_component_setting
+=======
+>>>>>>> Implement review feedback improvements
 
 # ─── import the thermodynamic routine ───────────────────────────────────
 try:
@@ -351,17 +354,18 @@ def evaluate_orc_economics(
         if dummy_result is not None:
             analysis_flags['use_preheater'] = dummy_result.get('use_preheater', None)
             analysis_flags['use_superheater'] = dummy_result.get('use_superheater', None)
-    except Exception:
+    except (ImportError, AttributeError, ValueError, RuntimeError) as e:
+        logger.debug(f"Could not perform consistency check: {e}")
         pass
     # config.pyの値と比較
     config_preheater = get_component_setting('use_preheater', False)
     config_superheater = get_component_setting('use_superheater', False)
     if (analysis_flags.get('use_preheater') is not None and
         analysis_flags['use_preheater'] != config_preheater):
-        print("[警告] ORC_Analysis.pyとEconomic.pyでuse_preheaterの設定が一致していません！")
+        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_preheaterの設定が一致していません！")
     if (analysis_flags.get('use_superheater') is not None and
         analysis_flags['use_superheater'] != config_superheater):
-        print("[警告] ORC_Analysis.pyとEconomic.pyでuse_superheaterの設定が一致していません！")
+        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_superheaterの設定が一致していません！")
 
     return {
         "component_costs": cost_df,
