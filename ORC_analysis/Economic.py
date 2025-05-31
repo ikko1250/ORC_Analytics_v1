@@ -147,6 +147,41 @@ def _calculate_pec_pump(W_kW: float) -> float:
 
 # ─── Public API ──────────────────────────────────────────────────────────
 
+def check_orc_toggle_consistency():
+    """ORC_Analysis.pyのトグル状態とconfig.pyの設定値の整合性を1回だけチェックする。"""
+    from ORC_Analysis import calculate_orc_performance_from_heat_source
+    analysis_flags = {}
+    try:
+        dummy_result = calculate_orc_performance_from_heat_source(
+            T_htf_in=400.0, Vdot_htf=1.0, T_cond=300.0, eta_pump=0.7, eta_turb=0.8
+        )
+        if dummy_result is not None:
+            analysis_flags['use_preheater'] = dummy_result.get('use_preheater', None)
+            analysis_flags['use_superheater'] = dummy_result.get('use_superheater', None)
+    except (ImportError, AttributeError, ValueError, RuntimeError) as e:
+        logger.debug(f"Could not perform consistency check: {e}")
+        return
+    config_preheater = get_component_setting('use_preheater', False)
+    config_superheater = get_component_setting('use_superheater', False)
+    if (analysis_flags.get('use_preheater') is not None and
+        analysis_flags['use_preheater'] != config_preheater):
+        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_preheaterの設定が一致していません！")
+    if (analysis_flags.get('use_superheater') is not None and
+        analysis_flags['use_superheater'] != config_superheater):
+        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_superheaterの設定が一致していません！")
+
+# 一度だけ整合性チェックを行うためのフラグ
+# _consistency_checked = False # このグローバル変数は現在使用されていません
+
+def _check_consistency_once():
+    # global _consistency_checked # この行は不要です。関数属性を使用しています。
+    if not getattr(_check_consistency_once, '_consistency_checked', False):
+        # このチェックは、ORC_Analysis.py が config.py の設定を正しく参照していることを
+        # 確認することを目的としています。通常、両者は同じ config.py を参照するため一致しますが、
+        # 開発中の変更等で意図せず不整合が生じる可能性を警告するために実行されます。
+        check_orc_toggle_consistency()
+        _check_consistency_once._consistency_checked = True
+
 def evaluate_orc_economics(
     *,
     P_evap: float,
@@ -164,23 +199,9 @@ def evaluate_orc_economics(
     project_life: int = LIFETIME_YR,
     annual_hours: int = ANNUAL_HOURS,
 ) -> Dict[str, pd.DataFrame | float | dict]:
-    """Run a combined **thermo‑economic** evaluation for a single ORC design.
+    """Run a combined **thermo‑economic** evaluation for a single ORC design."""
 
-    Parameters
-    ----------
-    P_evap, T_turb_in, T_cond, eta_pump, eta_turb, m_orc
-        As described in ORC_Analysis.calculate_orc_performance().
-    extra_duties : dict[str, (Q_kW, lmtd_K)], optional
-        Heat duty and LMTD for components **not** returned by the simplified
-        model (e.g. Superheater). Keys must match those in *U_VALUES*.
-
-    Returns
-    -------
-    dict with three entries:
-        ``"component_costs"``  → *pd.DataFrame*
-        ``"summary"``          → *pd.Series* (scalar KPIs)
-        ``"thermo"``           → k‑v mapping returned by ORC_Analysis
-    """
+    _check_consistency_once()
 
     # 1) Run thermodynamic model ––––––––––––––––––––––––––––––––––––––––
     psi_df, comp_df, kpi = calculate_orc_performance(
@@ -297,30 +318,6 @@ def evaluate_orc_economics(
             "Simple PB [yr]": PB_simple,
         }
     )
-
-    # 整合性チェック: ORC_Analysis.pyのトグル状態と一致しているか
-    from ORC_Analysis import calculate_orc_performance_from_heat_source
-    analysis_flags = {}
-    try:
-        # ダミー値で呼び出し（実際の計算値で呼ぶ場合は引数を調整）
-        dummy_result = calculate_orc_performance_from_heat_source(
-            T_htf_in=400.0, Vdot_htf=1.0, T_cond=300.0, eta_pump=0.7, eta_turb=0.8
-        )
-        if dummy_result is not None:
-            analysis_flags['use_preheater'] = dummy_result.get('use_preheater', None)
-            analysis_flags['use_superheater'] = dummy_result.get('use_superheater', None)
-    except (ImportError, AttributeError, ValueError, RuntimeError) as e:
-        logger.debug(f"Could not perform consistency check: {e}")
-        pass
-    # config.pyの値と比較
-    config_preheater = get_component_setting('use_preheater', False)
-    config_superheater = get_component_setting('use_superheater', False)
-    if (analysis_flags.get('use_preheater') is not None and
-        analysis_flags['use_preheater'] != config_preheater):
-        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_preheaterの設定が一致していません！")
-    if (analysis_flags.get('use_superheater') is not None and
-        analysis_flags['use_superheater'] != config_superheater):
-        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_superheaterの設定が一致していません！")
 
     return {
         "component_costs": cost_df,
