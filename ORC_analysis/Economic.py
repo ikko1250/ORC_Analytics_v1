@@ -343,30 +343,6 @@ def evaluate_orc_economics(
         }
     )
 
-    # 整合性チェック: ORC_Analysis.pyのトグル状態と一致しているか
-    from ORC_Analysis import calculate_orc_performance_from_heat_source
-    analysis_flags = {}
-    try:
-        # ダミー値で呼び出し（実際の計算値で呼ぶ場合は引数を調整）
-        dummy_result = calculate_orc_performance_from_heat_source(
-            T_htf_in=400.0, Vdot_htf=1.0, T_cond=300.0, eta_pump=0.7, eta_turb=0.8
-        )
-        if dummy_result is not None:
-            analysis_flags['use_preheater'] = dummy_result.get('use_preheater', None)
-            analysis_flags['use_superheater'] = dummy_result.get('use_superheater', None)
-    except (ImportError, AttributeError, ValueError, RuntimeError) as e:
-        logger.debug(f"Could not perform consistency check: {e}")
-        pass
-    # config.pyの値と比較
-    config_preheater = get_component_setting('use_preheater', False)
-    config_superheater = get_component_setting('use_superheater', False)
-    if (analysis_flags.get('use_preheater') is not None and
-        analysis_flags['use_preheater'] != config_preheater):
-        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_preheaterの設定が一致していません！")
-    if (analysis_flags.get('use_superheater') is not None and
-        analysis_flags['use_superheater'] != config_superheater):
-        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_superheaterの設定が一致していません！")
-
     return {
         "component_costs": cost_df,
         "summary": summary,
