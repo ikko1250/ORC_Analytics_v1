@@ -18,6 +18,7 @@ It includes:
 import numpy as np
 import pandas as pd
 import CoolProp.CoolProp as CP  # Thermophysical properties
+from ORC_analysis.config import get_component_setting
 
 DEFAULT_T0 = 298.15            # Dead‑state temperature [K] (25 °C)
 DEFAULT_FLUID = "R245fa"       # Working fluid (HFC‑245fa)
@@ -348,6 +349,17 @@ def calculate_orc_performance_from_heat_source(
         output["Evap_dT_lm [K]"] = comp_results.loc["Evaporator", "ΔT_lm [K]"]
         output["Evap_E_heat_in [kW]"] = comp_results.loc["Evaporator", "E_heat [kW]"]
 
+        # トグル状態取得
+        use_preheater = get_component_setting('use_preheater', False)
+        use_superheater = get_component_setting('use_superheater', False)
+        preheater_params = get_component_setting('preheater_params', {}) if use_preheater else None
+        superheater_params = get_component_setting('superheater_params', {}) if use_superheater else None
+
+        # トグル状態とパラメータを出力に含める
+        output["use_preheater"] = use_preheater
+        output["use_superheater"] = use_superheater
+        output["preheater_params"] = preheater_params
+        output["superheater_params"] = superheater_params
         return output
     except Exception as e:
         print("ERROR in calculate_orc_performance_from_heat_source:", e)
