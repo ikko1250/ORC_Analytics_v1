@@ -56,10 +56,6 @@ from ORC_analysis.config import get_component_setting
 
 # Setup logging
 logger = logging.getLogger(__name__)
-<<<<<<< HEAD
-from ORC_analysis.config import get_component_setting
-=======
->>>>>>> Implement review feedback improvements
 
 # ─── import the thermodynamic routine ───────────────────────────────────
 try:
@@ -263,29 +259,9 @@ def evaluate_orc_economics(
             area = 0.0
             U_val = U_VALUES[comp_name]
         elif comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
-        # Preheater/Superheaterのトグル判定
-        if comp_name == "Preheater" and not get_component_setting('use_preheater', False):
-            pec = 0.0
-            area = 0.0
-            U_val = U_VALUES[comp_name]
-        elif comp_name == "Superheater" and not get_component_setting('use_superheater', False):
-            pec = 0.0
-            area = 0.0
-            U_val = U_VALUES[comp_name]
-        elif comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
             U_val = U_VALUES[comp_name]
             area = area_from_duty(Q_kW, U_val, lmtd_K)
             pec_func = COMPONENT_PEC_CALCULATORS[comp_name]
-            pec = pec_func(area)
-        else:
-            continue
-        cost_rows[comp_name] = {
-            "Q [kW]": Q_kW,
-            "A [m²]": area,
-            "LMTD [K]": lmtd_K,
-            "U [kW/m²K]": U_val,
-            "PEC [$]": pec,
-        }
             pec = pec_func(area)
         else:
             continue
@@ -359,7 +335,6 @@ if __name__ == "__main__":
         eta_pump=0.75,
         eta_turb=0.80,
         m_orc=5.0,
-        # extra heat‑exchangers duties (kW, dT_LM[K]) – illustrative only
         # extra heat‑exchangers duties (kW, dT_LM[K]) – illustrative only
         extra_duties={
             "Superheater": (200.0, 20.0),
