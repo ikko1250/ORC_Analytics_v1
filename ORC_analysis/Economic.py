@@ -118,13 +118,14 @@ def _calculate_pec_regenerator(area: float) -> float:
         return 0.0
     return 2681.0 * area ** 0.59
 
-def _calculate_pec_condenser(area: float) -> float:
-    """PEC [$] for Condenser.
-    Formula: 1773 * Area_m2^0.80 (approx.)
+def _calculate_pec_condenser(mass_flow_rate_kg_s: float) -> float:
+    """PEC [$] for Condenser, based on mass flow rate at condenser inlet.
+    Formula: Placeholder - USER MUST PROVIDE THE CORRECT FORMULA.
     """
-    if area <= 0:
+    if mass_flow_rate_kg_s <= 0:
         return 0.0
-    return 1773.0 * area ** 0.80
+
+    return 1773 * mass_flow_rate_kg_s ** 0.8  
 
 def _calculate_pec_turbine(W_kW: float) -> float:
     """PEC [$] for Turbine.
@@ -253,24 +254,37 @@ def evaluate_orc_economics(
         if comp_name == "Preheater" and not get_component_setting('use_preheater', False):
             pec = 0.0
             area = 0.0
-            U_val = U_VALUES[comp_name]
+            U_val = U_VALUES.get(comp_name, 0.0) # Use .get for safety
         elif comp_name == "Superheater" and not get_component_setting('use_superheater', False):
             pec = 0.0
             area = 0.0
-            U_val = U_VALUES[comp_name]
+            U_val = U_VALUES.get(comp_name, 0.0) # Use .get for safety
         elif comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
             U_val = U_VALUES[comp_name]
+            # Area is calculated for all HXs for reporting, even if not used for PEC by all.
             area = area_from_duty(Q_kW, U_val, lmtd_K)
             pec_func = COMPONENT_PEC_CALCULATORS[comp_name]
-            pec = pec_func(area)
+            
+            component_specific_data = {}
+            if comp_name == "Condenser":
+                # Condenser PEC is based on mass flow rate m_orc
+                pec = pec_func(m_orc) # m_orc is from evaluate_orc_economics arguments
+                component_specific_data["m_orc_for_PEC [kg/s]"] = m_orc
+            else:
+                # Other heat exchangers (Evaporator, Superheater, Preheater, Regenerator)
+                # PEC based on area
+                pec = pec_func(area)
         else:
-            continue
+            logger.debug(f"Component {comp_name} skipped or handled differently in PEC calculation loop.")
+            continue # Skip if no U_VALUE or calculator (e.g. if it's not a HX handled here)
+        
         cost_rows[comp_name] = {
             "Q [kW]": Q_kW,
             "A [m²]": area,
             "LMTD [K]": lmtd_K,
             "U [kW/m²K]": U_val,
             "PEC [$]": pec,
+            **component_specific_data # Add m_orc_for_PEC if it's the condenser
         }
 
     # Calculate PEC for Power Components (Turbine, Pump)
@@ -294,8 +308,10 @@ def evaluate_orc_economics(
             "PEC [$]": pec_pump
         }
 
-    standard_columns = ["Q [kW]", "LMTD [K]", "U [kW/m²K]", "A [m²]", "W [kW]", "PEC [$]"]
+    standard_columns = ["Q [kW]", "LMTD [K]", "U [kW/m²K]", "A [m²]", "W [kW]", "m_orc_for_PEC [kg/s]", "PEC [$]"]
     cost_df = pd.DataFrame.from_dict(cost_rows, orient='index')
+    # Fill NaN with 0.0 for numeric columns, and empty string for potential object/string columns if any were added.
+    # For now, all these standard_columns are expected to be numeric or can be filled with 0.0 if absent for a component.
     cost_df = cost_df.reindex(columns=standard_columns).fillna(0.0)
 
     # 4) Aggregate economics ––––––––––––––––––––––––––––––––––––––––––––
