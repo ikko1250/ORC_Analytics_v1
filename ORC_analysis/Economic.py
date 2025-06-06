@@ -125,7 +125,7 @@ def _calculate_pec_condenser(mass_flow_rate_kg_s: float) -> float:
     if mass_flow_rate_kg_s <= 0:
         return 0.0
 
-    return 1773 * mass_flow_rate_kg_s ** 0.8  
+    return 1773.0 * mass_flow_rate_kg_s ** 0.8  
 
 def _calculate_pec_turbine(W_kW: float) -> float:
     """PEC [$] for Turbine.
