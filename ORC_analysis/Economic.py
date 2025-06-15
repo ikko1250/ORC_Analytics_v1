@@ -74,6 +74,7 @@ U_VALUES = {
     "Preheater":  0.6,
 }
 
+CURRENT_CEPCI = 799.5      # Chemical Engineering Plant Cost Index (reference year 2023)
 ANNUAL_HOURS = 8000        # h        (n)
 INTEREST_RATE = 0.20       # –        (i)
 LIFETIME_YR   = 20         # year     (N)
@@ -101,13 +102,50 @@ def area_from_duty(Q_kW: float, U: float, lmtd_K: float) -> float:
 # for heat exchangers, or power (kW) for turbine and pump.
 # Formulas from Table 5 of the reference paper.
 
+def _calculate_pec_evaporator(area_m2: float) -> float:
+    """PEC [$] for Horizontal Tube Evaporator.
+    Formula based on Seider et al. (2016), Table 22.4, item (d).
+    Cost = min_cost * (area_ft2 / min_area_ft2) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    """
+    if area_m2 <= 0:  # Avoid math errors for non-existent or zero-area components
+        return 0.0
+
+    min_cost = 52861.0
+    min_area_ft2 = 100.0
+    scaling_factor = 0.53
+    listed_CEPCI = 567.0  # CEPCI in 2016, when Seider et al. book was published
+    m2_to_ft2_conversion_factor = 10.7639
+
+    area_ft2 = area_m2 * m2_to_ft2_conversion_factor
+
+    cost = min_cost * (area_ft2 / min_area_ft2) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    return cost
+
+def _calculate_pec_hot_water_heater(power_kW: float) -> float:
+    """PEC [$] for Hot Water Heater (used for Preheater and Superheater).
+    Formula based on internal data for Hot Water Heater.
+    Cost = min_cost * (power_kW / min_power_kW) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    """
+    if power_kW <= 0:
+        return 0.0
+
+    min_cost = 37868.0
+    min_power_kW = 650.0
+    scaling_factor = 0.74
+    listed_CEPCI = 542.0  # CEPCI for the base cost year of the Hot Water Heater
+
+    cost = min_cost * (power_kW / min_power_kW) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    return cost
+
 def _calculate_pec_heat_exchanger_common(area: float) -> float:
-    """PEC [$] for Evaporator, Superheater, Preheater.
-    Formula: 130 * (Area_m2 / 0.093)^0.78
+    """PEC [$] for generic heat exchangers (currently unused).
+    Original Formula: 130 * (Area_m2 / 0.093)^0.78
     0.093は㎡ to  ft²の換算係数
+    This function is currently not mapped to any component in COMPONENT_PEC_CALCULATORS.
     """
     if area <= 0:  # Avoid math errors for non-existent or zero-area components
         return 0.0
+    # logger.warning("_calculate_pec_heat_exchanger_common is called but might be deprecated.")
     return 130.0 * (area / 0.093) ** 0.78
 
 def _calculate_pec_regenerator(area: float) -> float:
@@ -118,31 +156,66 @@ def _calculate_pec_regenerator(area: float) -> float:
         return 0.0
     return 2681.0 * area ** 0.59
 
+def _calculate_pec_condenser_new(area_m2: float) -> float:
+    """PEC [$] for Condenser.
+    Formula based on Sinnott & Towler (2020), "Chemical Engineering Design", 6th Ed., Table 6.1.
+    Cost = min_cost * (area_m2 / min_area_m2) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    """
+    if area_m2 <= 0:
+        return 0.0
+
+    min_cost = 24729.0       # Cost for min_area_m2 in base year
+    min_area_m2 = 10.0       # Minimum area for base cost
+    scaling_factor = 0.46    # Cost exponent
+    listed_CEPCI = 509.7     # CEPCI in Q4 2008 (Sinnott & Towler reference year for this cost)
+
+    cost = min_cost * (area_m2 / min_area_m2) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    return cost
+
 def _calculate_pec_condenser(mass_flow_rate_kg_s: float) -> float:
     """PEC [$] for Condenser, based on mass flow rate at condenser inlet.
     Formula: Placeholder - USER MUST PROVIDE THE CORRECT FORMULA.
+    (This function is currently not used for the primary 'Condenser' component
+     after changes for area-based calculation via _calculate_pec_condenser_new)
     """
     if mass_flow_rate_kg_s <= 0:
         return 0.0
 
-    return 1773.0 * mass_flow_rate_kg_s ** 0.8  
+    return 1773.0 * mass_flow_rate_kg_s ** 0.8
 
 def _calculate_pec_turbine(W_kW: float) -> float:
     """PEC [$] for Turbine.
-    Formula: 6000 * Power_kW^0.70
+    New formula based on Woods 2007, Steam Turbine Noncondensing.
+    Cost = min_cost * (W_kW / min_power_kW) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
     """
-    if W_kW <= 0: # Turbine power should be positive (produced)
+    if W_kW <= 0:  # Turbine power should be positive (produced)
         return 0.0
-    return 6000.0 * W_kW ** 0.70
+
+    min_cost = 13241.0
+    min_power_kW = 7.0
+    scaling_factor = 0.51
+    listed_CEPCI = 1000.0  # CEPCI for the base cost year (Woods 2007)
+
+    cost = min_cost * (W_kW / min_power_kW) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    return cost
 
 def _calculate_pec_pump(W_kW: float) -> float:
     """PEC [$] for Pump.
-    Formula: 3540 * Power_kW^0.70
+    New formula based on Sinnott & Towler 2020, Single Stage Centrifugal Pump, Table 6.1.
+    Cost = min_cost * (W_kW / min_power_kW) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    min_power_kW = 1.0 kW is an assumed reference for the given min_cost.
     """
     # Pump power (W_p) from thermo model is positive (work input)
     if W_kW <= 0:
         return 0.0
-    return 3540.0 * W_kW ** 0.70
+
+    min_cost = 6948.0
+    min_power_kW = 1.0  # Assumed reference power for the base cost from S&T Table 6.1
+    scaling_factor = 0.19
+    listed_CEPCI = 509.7  # CEPCI in Q4 2008 (Sinnott & Towler reference year for this cost)
+
+    cost = min_cost * (W_kW / min_power_kW) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
+    return cost
 
 
 
@@ -238,11 +311,11 @@ def evaluate_orc_economics(
     # Maps component name to its specific PEC calculation function.
     # Heat exchanger functions expect area (m²), power component functions expect power (kW).
     COMPONENT_PEC_CALCULATORS = {
-        "Evaporator": _calculate_pec_heat_exchanger_common,
-        "Superheater": _calculate_pec_heat_exchanger_common,
-        "Preheater": _calculate_pec_heat_exchanger_common,
+        "Evaporator": _calculate_pec_evaporator,
+        "Superheater": _calculate_pec_hot_water_heater, # Updated
+        "Preheater": _calculate_pec_hot_water_heater,  # Updated
         "Regenerator": _calculate_pec_regenerator,
-        "Condenser": _calculate_pec_condenser,
+        "Condenser": _calculate_pec_condenser_new,
         "Turbine": _calculate_pec_turbine,
         "Pump": _calculate_pec_pump,
     }
@@ -253,38 +326,38 @@ def evaluate_orc_economics(
         # Preheater/Superheaterのトグル判定
         if comp_name == "Preheater" and not get_component_setting('use_preheater', False):
             pec = 0.0
-            area = 0.0
-            U_val = U_VALUES.get(comp_name, 0.0) # Use .get for safety
+            area = 0.0 # Still calculate area for reporting if needed, or set to 0
+            U_val = U_VALUES.get(comp_name, 0.0)
         elif comp_name == "Superheater" and not get_component_setting('use_superheater', False):
             pec = 0.0
-            area = 0.0
-            U_val = U_VALUES.get(comp_name, 0.0) # Use .get for safety
+            area = 0.0 # Still calculate area for reporting if needed, or set to 0
+            U_val = U_VALUES.get(comp_name, 0.0)
         elif comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
             U_val = U_VALUES[comp_name]
-            # Area is calculated for all HXs for reporting, even if not used for PEC by all.
+            # Area is calculated for all HXs for reporting purposes.
             area = area_from_duty(Q_kW, U_val, lmtd_K)
             pec_func = COMPONENT_PEC_CALCULATORS[comp_name]
             
-            component_specific_data = {}
-            if comp_name == "Condenser":
-                # Condenser PEC is based on mass flow rate m_orc
-                pec = pec_func(m_orc) # m_orc is from evaluate_orc_economics arguments
-                component_specific_data["m_orc_for_PEC [kg/s]"] = m_orc
-            else:
-                # Other heat exchangers (Evaporator, Superheater, Preheater, Regenerator)
-                # PEC based on area
-                pec = pec_func(area)
+            component_specific_data = {} # Initialize for all components
+
+            # Preheater and Superheater use power_kW (Q_kW) for PEC.
+            # Other HXs (Evaporator, Condenser, Regenerator) use area_m2 for PEC.
+            if comp_name in ["Superheater", "Preheater"]:
+                pec = pec_func(Q_kW) # Pass Q_kW as power_kW
+            else: # Evaporator, Condenser, Regenerator
+                pec = pec_func(area) # Pass area_m2
+
         else:
             logger.debug(f"Component {comp_name} skipped or handled differently in PEC calculation loop.")
             continue # Skip if no U_VALUE or calculator (e.g. if it's not a HX handled here)
         
         cost_rows[comp_name] = {
             "Q [kW]": Q_kW,
-            "A [m²]": area,
+            "A [m²]": area, # Area is now consistently calculated and stored
             "LMTD [K]": lmtd_K,
             "U [kW/m²K]": U_val,
             "PEC [$]": pec,
-            **component_specific_data # Add m_orc_for_PEC if it's the condenser
+            **component_specific_data # This will be empty for Condenser now
         }
 
     # Calculate PEC for Power Components (Turbine, Pump)
