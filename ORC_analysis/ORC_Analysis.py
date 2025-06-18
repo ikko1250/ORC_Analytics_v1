@@ -115,8 +115,10 @@ def calculate_orc_performance(
     P0=DEFAULT_P0,
     T_htf_in=None,
     T_htf_out=None,
+    Q_preheater_kW=0.0,
+    Q_superheater_kW=0.0,
 ):
-    """Return (ψ‑table, component‑table, cycle‑kpi) for a simple ORC."""
+    """Return (ψ‑table, component‑table, cycle‑kpi) for ORC with optional preheater/superheater."""
 
     # --- 3.1 Environmental reference state ---------------------------------
     h0 = CP.PropsSI("HMASS", "T", T0, "P", P0, fluid) / 1e3  # kJ/kg
@@ -140,12 +142,28 @@ def calculate_orc_performance(
     s2  = _get_coolprop_property("SMASS", fluid, P_Pa=P2, H_J_per_kg=h2 * J_PER_KJ, divisor=J_PER_KJ)
     states["2"] = {"h": h2, "s": s2, "T": T2, "P": P2}
 
-    # (3) turbine inlet (superheated or sat. vapour)
-    T3 = T_turb_in
+    # (2b) after preheater (if used)
+    h2b = h2 + Q_preheater_kW / m_orc  # add preheater energy
+    T2b = _get_coolprop_property("T", fluid, P_Pa=P2, H_J_per_kg=h2b * J_PER_KJ)
+    s2b = _get_coolprop_property("SMASS", fluid, P_Pa=P2, H_J_per_kg=h2b * J_PER_KJ, divisor=J_PER_KJ)
+    states["2b"] = {"h": h2b, "s": s2b, "T": T2b, "P": P2}
+
+    # (3) evaporator outlet
+    T3_evap = T_turb_in  # assuming for now, will be modified
     P3 = P_evap
-    h3 = _get_coolprop_property("HMASS", fluid, T_K=T3, P_Pa=P3, divisor=J_PER_KJ)
-    s3 = _get_coolprop_property("SMASS", fluid, T_K=T3, P_Pa=P3, divisor=J_PER_KJ)
-    states["3"] = {"h": h3, "s": s3, "T": T3, "P": P3}
+    h3_evap = _get_coolprop_property("HMASS", fluid, T_K=T3_evap, P_Pa=P3, divisor=J_PER_KJ)
+    s3_evap = _get_coolprop_property("SMASS", fluid, T_K=T3_evap, P_Pa=P3, divisor=J_PER_KJ)
+    states["3"] = {"h": h3_evap, "s": s3_evap, "T": T3_evap, "P": P3}
+
+    # (3b) after superheater (if used)
+    h3b = h3_evap + Q_superheater_kW / m_orc  # add superheater energy
+    T3b = _get_coolprop_property("T", fluid, P_Pa=P3, H_J_per_kg=h3b * J_PER_KJ)
+    s3b = _get_coolprop_property("SMASS", fluid, P_Pa=P3, H_J_per_kg=h3b * J_PER_KJ, divisor=J_PER_KJ)
+    states["3b"] = {"h": h3b, "s": s3b, "T": T3b, "P": P3}
+    
+    # Turbine inlet is now after superheater
+    h3 = h3b
+    s3 = s3b
 
     # (4) turbine outlet
     P4 = P1
@@ -183,36 +201,50 @@ def calculate_orc_performance(
         "η_exergy [-]": W_p_rev / W_p if W_p else np.nan,
     }
 
-    # (b) Evaporator --------------------------------------------------------
-    Q_e = m_orc * (h3 - h2)
+    # (b) Preheater --------------------------------------------------------
+    if Q_preheater_kW > 0:
+        results["Preheater"] = {
+            "Q [kW]": Q_preheater_kW,
+            "E_dest [kW]": Q_preheater_kW - m_orc * (psi["2b"] - psi["2"]),
+        }
+
+    # (c) Evaporator --------------------------------------------------------
+    Q_e = m_orc * (h3_evap - h2b)
 
     if T_htf_in is not None and T_htf_out is not None:
-        dT_lm = lmtd_counter_current(T_htf_in, T_htf_out, T2, T3)
+        dT_lm = lmtd_counter_current(T_htf_in, T_htf_out, T2b, T3_evap)
         T_hot_avg = 0.5 * (T_htf_in + T_htf_out)
     else:
-        dT_lm = T3 - T2              # fallback dummy
-        T_hot_avg = 0.5 * (T2 + T3)  # fallback if HTF temps not provided
+        dT_lm = T3_evap - T2b        # fallback dummy
+        T_hot_avg = 0.5 * (T2b + T3_evap)  # fallback if HTF temps not provided
 
     E_heat_e = exergy_of_heat(Q_e, T_hot_avg, T0)
     results["Evaporator"] = {
         "Q [kW]": Q_e,
         "E_heat [kW]": E_heat_e,
-        "E_dest [kW]": E_heat_e - m_orc * (psi["3"] - psi["2"]),
-        "ε [-]": m_orc * (psi["3"] - psi["2"]) / E_heat_e if E_heat_e else np.nan,
+        "E_dest [kW]": E_heat_e - m_orc * (psi["3"] - psi["2b"]),
+        "ε [-]": m_orc * (psi["3"] - psi["2b"]) / E_heat_e if E_heat_e else np.nan,
         "ΔT_lm [K]": dT_lm,
         "T_hot_avg [K]": T_hot_avg,
     }
 
-    # (c) Turbine -----------------------------------------------------------
+    # (d) Superheater -------------------------------------------------------
+    if Q_superheater_kW > 0:
+        results["Superheater"] = {
+            "Q [kW]": Q_superheater_kW,
+            "E_dest [kW]": Q_superheater_kW - m_orc * (psi["3b"] - psi["3"]),
+        }
+
+    # (e) Turbine -----------------------------------------------------------
     W_t = m_orc * (h3 - h4)
-    W_t_rev = m_orc * (psi["3"] - psi["4"])
+    W_t_rev = m_orc * (psi["3b"] - psi["4"])
     results["Turbine"] = {
         "W [kW]": W_t,
         "E_dest [kW]": W_t_rev - W_t,
         "η_exergy [-]": W_t / W_t_rev if W_t_rev else np.nan,
     }
 
-    # (d) Condenser ---------------------------------------------------------
+    # (f) Condenser ---------------------------------------------------------
     Q_c = m_orc * (h1 - h4)         # should be < 0
     T_cold_avg = 0.5 * (T4 + T1)
     E_heat_c = exergy_of_heat(Q_c, T_cold_avg, T0)
@@ -226,16 +258,19 @@ def calculate_orc_performance(
     # -----------------------------------------------------------------------
     # 5. Cycle KPIs
     # -----------------------------------------------------------------------
-    W_net = W_t - W_p
-    eta_th = W_net / Q_e if Q_e else np.nan
+    W_net = W_t - W_p - Q_preheater_kW - Q_superheater_kW  # subtract electrical consumption
+    Q_total_in = Q_e + Q_preheater_kW + Q_superheater_kW
+    eta_th = W_net / Q_total_in if Q_total_in else np.nan
     eps_ex = W_net / E_heat_e if E_heat_e else np.nan
 
     cycle_perf = {
         "W_net [kW]": W_net,
-        "Q_in [kW]": Q_e,
+        "Q_in [kW]": Q_total_in,
         "Q_out [kW]": Q_c,
         "η_th [-]": eta_th,
         "ε_ex [-]": eps_ex,
+        "Q_preheater [kW]": Q_preheater_kW,
+        "Q_superheater [kW]": Q_superheater_kW,
     }
 
     comp_df = pd.DataFrame(results).T
@@ -259,8 +294,9 @@ def calculate_orc_performance_from_heat_source(
     P_htf: float = 101.325e3,
     T0: float = DEFAULT_T0,
     P0: float = DEFAULT_P0,
+    T_evap_out_target: float = None,
 ):
-    """Compute ORC KPIs when driven by a single‑phase heat source."""
+    """Compute ORC KPIs when driven by a single‑phase heat source with optional optimization."""
     try:
         superheat_K = superheat_C
         T_sat_evap = T_htf_in - pinch_delta_K - superheat_K
@@ -315,7 +351,47 @@ def calculate_orc_performance_from_heat_source(
             return None
         m_orc = Q_available / delta_h_evap
 
-        # Calculate final performance with determined m_orc
+        # コンポーネント設定を取得
+        use_preheater = get_component_setting('use_preheater', False)
+        use_superheater = get_component_setting('use_superheater', False)
+        
+        # 最適化計算の実行
+        if T_evap_out_target is not None:
+            from scipy.optimize import minimize_scalar
+            
+            def objective(Q_superheater):
+                Q_preheater = 0.0  # 現在はpreheaterは使用しない
+                
+                try:
+                    psi_df, comp_results, cycle_kpi = calculate_orc_performance(
+                        P_evap=P_evap,
+                        T_turb_in=T_turb_in,
+                        T_cond=T_cond,
+                        eta_pump=eta_pump,
+                        eta_turb=eta_turb,
+                        fluid=fluid_orc,
+                        m_orc=m_orc,
+                        T0=T0,
+                        P0=P0,
+                        T_htf_in=T_htf_in,
+                        T_htf_out=T_htf_out,
+                        Q_preheater_kW=Q_preheater,
+                        Q_superheater_kW=Q_superheater,
+                    )
+                    return -cycle_kpi["W_net [kW]"]  # negative for maximization
+                except:
+                    return 1e6  # penalty for infeasible solutions
+            
+            # 最適化実行
+            result = minimize_scalar(objective, bounds=(0, 100), method='bounded')
+            Q_superheater_opt = result.x if result.success else 0.0
+        else:
+            Q_superheater_opt = 0.0
+        
+        # 最終的な性能計算
+        Q_preheater_kW = 0.0  # 現在は常に0（将来の拡張用）
+        Q_superheater_kW = Q_superheater_opt if use_superheater else 0.0
+        
         psi_df, comp_results, cycle_kpi = calculate_orc_performance(
             P_evap=P_evap,
             T_turb_in=T_turb_in,
@@ -328,6 +404,8 @@ def calculate_orc_performance_from_heat_source(
             P0=P0,
             T_htf_in=T_htf_in,
             T_htf_out=T_htf_out,
+            Q_preheater_kW=Q_preheater_kW,
+            Q_superheater_kW=Q_superheater_kW,
         )
 
         # Populate output dictionary
@@ -349,17 +427,14 @@ def calculate_orc_performance_from_heat_source(
         output["Evap_dT_lm [K]"] = comp_results.loc["Evaporator", "ΔT_lm [K]"]
         output["Evap_E_heat_in [kW]"] = comp_results.loc["Evaporator", "E_heat [kW]"]
 
-        # トグル状態取得
-        use_preheater = get_component_setting('use_preheater', False)
-        use_superheater = get_component_setting('use_superheater', False)
-        preheater_params = get_component_setting('preheater_params', {}) if use_preheater else None
-        superheater_params = get_component_setting('superheater_params', {}) if use_superheater else None
-
-        # トグル状態とパラメータを出力に含める
+        # コンポーネント状態を出力に含める
         output["use_preheater"] = use_preheater
         output["use_superheater"] = use_superheater
-        output["preheater_params"] = preheater_params
-        output["superheater_params"] = superheater_params
+        output["Q_preheater_kW"] = Q_preheater_kW
+        output["Q_superheater_kW"] = Q_superheater_kW
+        if T_evap_out_target is not None:
+            output["T_evap_out_target"] = T_evap_out_target
+            output["optimization_used"] = True
         return output
     except Exception as e:
         print("ERROR in calculate_orc_performance_from_heat_source:", e)
