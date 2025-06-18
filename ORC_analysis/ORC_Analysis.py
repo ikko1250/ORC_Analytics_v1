@@ -294,7 +294,8 @@ def calculate_orc_performance_from_heat_source(
     P_htf: float = 101.325e3,
     T0: float = DEFAULT_T0,
     P0: float = DEFAULT_P0,
-    T_evap_out_target: float = None,
+    Q_preheater_kW_input: float = 0.0,  # 外部から与えられる予熱器熱量
+    Q_superheater_kW_input: float = 0.0, # 外部から与えられる過熱器熱量
 ):
     """Compute ORC KPIs when driven by a single‑phase heat source with optional optimization."""
     try:
@@ -351,47 +352,7 @@ def calculate_orc_performance_from_heat_source(
             return None
         m_orc = Q_available / delta_h_evap
 
-        # コンポーネント設定を取得
-        use_preheater = get_component_setting('use_preheater', False)
-        use_superheater = get_component_setting('use_superheater', False)
-        
-        # 最適化計算の実行
-        if T_evap_out_target is not None:
-            from scipy.optimize import minimize_scalar
-            
-            def objective(Q_superheater):
-                Q_preheater = 0.0  # 現在はpreheaterは使用しない
-                
-                try:
-                    psi_df, comp_results, cycle_kpi = calculate_orc_performance(
-                        P_evap=P_evap,
-                        T_turb_in=T_turb_in,
-                        T_cond=T_cond,
-                        eta_pump=eta_pump,
-                        eta_turb=eta_turb,
-                        fluid=fluid_orc,
-                        m_orc=m_orc,
-                        T0=T0,
-                        P0=P0,
-                        T_htf_in=T_htf_in,
-                        T_htf_out=T_htf_out,
-                        Q_preheater_kW=Q_preheater,
-                        Q_superheater_kW=Q_superheater,
-                    )
-                    return -cycle_kpi["W_net [kW]"]  # negative for maximization
-                except:
-                    return 1e6  # penalty for infeasible solutions
-            
-            # 最適化実行
-            result = minimize_scalar(objective, bounds=(0, 100), method='bounded')
-            Q_superheater_opt = result.x if result.success else 0.0
-        else:
-            Q_superheater_opt = 0.0
-        
         # 最終的な性能計算
-        Q_preheater_kW = 0.0  # 現在は常に0（将来の拡張用）
-        Q_superheater_kW = Q_superheater_opt if use_superheater else 0.0
-        
         psi_df, comp_results, cycle_kpi = calculate_orc_performance(
             P_evap=P_evap,
             T_turb_in=T_turb_in,
@@ -404,8 +365,8 @@ def calculate_orc_performance_from_heat_source(
             P0=P0,
             T_htf_in=T_htf_in,
             T_htf_out=T_htf_out,
-            Q_preheater_kW=Q_preheater_kW,
-            Q_superheater_kW=Q_superheater_kW,
+            Q_preheater_kW=Q_preheater_kW_input,
+            Q_superheater_kW=Q_superheater_kW_input,
         )
 
         # Populate output dictionary
@@ -428,13 +389,10 @@ def calculate_orc_performance_from_heat_source(
         output["Evap_E_heat_in [kW]"] = comp_results.loc["Evaporator", "E_heat [kW]"]
 
         # コンポーネント状態を出力に含める
-        output["use_preheater"] = use_preheater
-        output["use_superheater"] = use_superheater
-        output["Q_preheater_kW"] = Q_preheater_kW
-        output["Q_superheater_kW"] = Q_superheater_kW
-        if T_evap_out_target is not None:
-            output["T_evap_out_target"] = T_evap_out_target
-            output["optimization_used"] = True
+        output["use_preheater"] = True if Q_preheater_kW_input > 0 else False
+        output["use_superheater"] = True if Q_superheater_kW_input > 0 else False
+        output["Q_preheater_kW"] = Q_preheater_kW_input
+        output["Q_superheater_kW"] = Q_superheater_kW_input
         return output
     except Exception as e:
         print("ERROR in calculate_orc_performance_from_heat_source:", e)

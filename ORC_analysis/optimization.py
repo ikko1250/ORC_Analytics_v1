@@ -53,17 +53,14 @@ def optimize_orc_with_components(
     
     def objective(params):
         """目的関数：正味出力を最大化（符号反転）"""
+        current_Q_preheater = 0.0
+        current_Q_superheater = 0.0
         if use_preheater and use_superheater:
-            Q_preheater, Q_superheater = params
+            current_Q_preheater, current_Q_superheater = params
         elif use_preheater:
-            Q_preheater = params[0]
-            Q_superheater = 0.0
+            current_Q_preheater = params
         elif use_superheater:
-            Q_preheater = 0.0
-            Q_superheater = params[0]
-        else:
-            Q_preheater = 0.0
-            Q_superheater = 0.0
+            current_Q_superheater = params
         
         try:
             result = calculate_orc_performance_from_heat_source(
@@ -77,7 +74,9 @@ def optimize_orc_with_components(
                 superheat_C=superheat_C,
                 pinch_delta_K=pinch_delta_K,
                 P_htf=P_htf,
-                T_evap_out_target=T_evap_out_target,
+                # T_evap_out_target はここでは渡さない
+                Q_preheater_kW_input=current_Q_preheater,
+                Q_superheater_kW_input=current_Q_superheater,
             )
             
             if result is None:
@@ -89,25 +88,30 @@ def optimize_orc_with_components(
             return 1e6  # エラー時のペナルティ
     
     # 最適化の実行
+    optimization_run_success = False
     if use_preheater and use_superheater:
         # 両方使用する場合
         bounds = [(0, max_preheater_power), (0, max_superheater_power)]
-        result = minimize(objective, x0=[10.0, 10.0], bounds=bounds, method='L-BFGS-B')
-        Q_preheater_opt, Q_superheater_opt = result.x if result.success else [0.0, 0.0]
+        opt_result_obj = minimize(objective, x0=[10.0, 10.0], bounds=bounds, method='L-BFGS-B')
+        Q_preheater_opt, Q_superheater_opt = opt_result_obj.x if opt_result_obj.success else [0.0, 0.0]
+        optimization_run_success = opt_result_obj.success
     elif use_preheater:
         # 予熱器のみ使用
-        result = minimize_scalar(objective, bounds=(0, max_preheater_power), method='bounded')
-        Q_preheater_opt = result.x if result.success else 0.0
+        opt_result_obj = minimize_scalar(objective, bounds=(0, max_preheater_power), method='bounded')
+        Q_preheater_opt = opt_result_obj.x if opt_result_obj.success else 0.0
         Q_superheater_opt = 0.0
+        optimization_run_success = opt_result_obj.success
     elif use_superheater:
         # 過熱器のみ使用
-        result = minimize_scalar(objective, bounds=(0, max_superheater_power), method='bounded')
+        opt_result_obj = minimize_scalar(objective, bounds=(0, max_superheater_power), method='bounded')
         Q_preheater_opt = 0.0
-        Q_superheater_opt = result.x if result.success else 0.0
+        Q_superheater_opt = opt_result_obj.x if opt_result_obj.success else 0.0
+        optimization_run_success = opt_result_obj.success
     else:
         # どちらも使用しない
         Q_preheater_opt = 0.0
         Q_superheater_opt = 0.0
+        optimization_run_success = True # 最適化処理自体は不要なので成功とみなす
     
     # 最適解での最終計算
     final_result = calculate_orc_performance_from_heat_source(
@@ -121,21 +125,25 @@ def optimize_orc_with_components(
         superheat_C=superheat_C,
         pinch_delta_K=pinch_delta_K,
         P_htf=P_htf,
-        T_evap_out_target=T_evap_out_target,
+        # T_evap_out_target はここでは渡さない
+        Q_preheater_kW_input=Q_preheater_opt,
+        Q_superheater_kW_input=Q_superheater_opt,
     )
     
     if final_result is not None:
         final_result.update({
             "Q_preheater_opt [kW]": Q_preheater_opt,
             "Q_superheater_opt [kW]": Q_superheater_opt,
-            "optimization_success": True,
+            "optimization_success": optimization_run_success,
+            "T_evap_out_target_param": T_evap_out_target, # 元の引数を記録
         })
     else:
         final_result = {
             "Q_preheater_opt [kW]": Q_preheater_opt,
             "Q_superheater_opt [kW]": Q_superheater_opt,
-            "optimization_success": False,
-            "W_net [kW]": 0.0,
+            "optimization_success": False, # 最終計算が失敗した場合
+            "W_net [kW]": np.nan, # または 0.0
+            "T_evap_out_target_param": T_evap_out_target, # 元の引数を記録
         }
     
     return final_result
@@ -174,19 +182,16 @@ def sensitivity_analysis_components(
     results = []
     
     for power in component_power_range:
-        if use_preheater and use_superheater:
+        current_Q_preheater_sens = 0.0
+        current_Q_superheater_sens = 0.0
+        if use_preheater and use_superheater: # 感度分析では両方に同じ電力を割り当てる
             # 両方使用する場合は簡略化して同じ電力を使用
-            Q_preheater = power
-            Q_superheater = power
+            current_Q_preheater_sens = power
+            current_Q_superheater_sens = power
         elif use_preheater:
-            Q_preheater = power
-            Q_superheater = 0.0
+            current_Q_preheater_sens = power
         elif use_superheater:
-            Q_preheater = 0.0
-            Q_superheater = power
-        else:
-            Q_preheater = 0.0
-            Q_superheater = 0.0
+            current_Q_superheater_sens = power
         
         try:
             result = calculate_orc_performance_from_heat_source(
@@ -195,14 +200,16 @@ def sensitivity_analysis_components(
                 T_cond=T_cond,
                 eta_pump=eta_pump,
                 eta_turb=eta_turb,
-                T_evap_out_target=T_evap_out_target,
+                # T_evap_out_target はここでは渡さない
+                Q_preheater_kW_input=current_Q_preheater_sens,
+                Q_superheater_kW_input=current_Q_superheater_sens,
                 **kwargs
             )
             
             if result is not None:
                 result.update({
-                    "Q_preheater_test [kW]": Q_preheater,
-                    "Q_superheater_test [kW]": Q_superheater,
+                    "Q_preheater_test [kW]": current_Q_preheater_sens,
+                    "Q_superheater_test [kW]": current_Q_superheater_sens,
                 })
                 results.append(result)
         
