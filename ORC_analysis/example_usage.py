@@ -4,6 +4,12 @@
 最適化機能の使用方法を示します。
 """
 
+import sys
+import os
+
+# プロジェクトルートをPythonパスに追加
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from ORC_analysis.config import set_component_setting, validate_component_settings
 from ORC_analysis.ORC_Analysis import calculate_orc_performance_from_heat_source
 from ORC_analysis.optimization import optimize_orc_with_components, sensitivity_analysis_components
@@ -13,8 +19,8 @@ def example_basic_orc():
     """基本的なORC計算の例"""
     print("=== 基本的なORC計算 ===")
     
-    # パラメータ設定
-    T_htf_in = 473.15  # 200°C
+    # パラメータ設定（R245fa臨界温度427.01K以下に調整）
+    T_htf_in = 343.15  # 70°C
     Vdot_htf = 0.01    # m³/s
     T_cond = 305.15    # 32°C
     eta_pump = 0.75
@@ -49,7 +55,7 @@ def example_with_preheater():
     })
     
     # パラメータ設定
-    T_htf_in = 473.15  # 200°C
+    T_htf_in = 343.15  # 70°C
     Vdot_htf = 0.01    # m³/s
     T_cond = 305.15    # 32°C
     eta_pump = 0.75
@@ -62,6 +68,7 @@ def example_with_preheater():
         T_cond=T_cond,
         eta_pump=eta_pump,
         eta_turb=eta_turb,
+        Q_preheater_kW_input=10.0,  # 予熱器に10kW投入
     )
     
     if result:
@@ -88,7 +95,7 @@ def example_with_superheater():
     })
     
     # パラメータ設定
-    T_htf_in = 473.15  # 200°C
+    T_htf_in = 343.15  # 70°C
     Vdot_htf = 0.01    # m³/s
     T_cond = 305.15    # 32°C
     eta_pump = 0.75
@@ -101,6 +108,7 @@ def example_with_superheater():
         T_cond=T_cond,
         eta_pump=eta_pump,
         eta_turb=eta_turb,
+        Q_superheater_kW_input=15.0,  # 過熱器に15kW投入
     )
     
     if result:
@@ -123,12 +131,12 @@ def example_optimization():
     set_component_setting('use_superheater', True)
     
     # パラメータ設定
-    T_htf_in = 473.15  # 200°C
+    T_htf_in = 343.15  # 200°C
     Vdot_htf = 0.01    # m³/s
     T_cond = 305.15    # 32°C
     eta_pump = 0.75
     eta_turb = 0.80
-    T_evap_out_target = 453.15  # 180°C
+    T_evap_out_target = 323.15  # 50°C
     
     # 最適化実行
     result = optimize_orc_with_components(
@@ -160,12 +168,12 @@ def example_sensitivity_analysis():
     set_component_setting('use_superheater', True)
     
     # パラメータ設定
-    T_htf_in = 473.15  # 200°C
+    T_htf_in = 343.15  # 200°C
     Vdot_htf = 0.01    # m³/s
     T_cond = 305.15    # 32°C
     eta_pump = 0.75
     eta_turb = 0.80
-    T_evap_out_target = 453.15  # 180°C
+    T_evap_out_target = 323.15  # 50°C
     
     # 感度解析実行（簡略化版）
     import numpy as np
