@@ -5,8 +5,8 @@ import io
 import sys
 from contextlib import redirect_stdout
 
-from ORC_analysis.config import set_component_setting, get_component_setting
-from ORC_analysis.Economic import evaluate_orc_economics
+from .config import set_component_setting, get_component_setting
+from .Economic import evaluate_orc_economics
 
 # Tolerance for floating point comparison
 FLOAT_TOLERANCE = 1e-6

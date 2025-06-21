@@ -52,14 +52,22 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from ORC_analysis.config import get_component_setting
+
+# Try relative import first, fallback to absolute import for direct execution
+try:
+    from .config import get_component_setting
+except ImportError:
+    from config import get_component_setting
 
 # Setup logging
 logger = logging.getLogger(__name__)
 
 # ─── import the thermodynamic routine ───────────────────────────────────
 try:
-    from ORC_Analysis import calculate_orc_performance
+    try:
+        from .ORC_Analysis import calculate_orc_performance
+    except ImportError:
+        from ORC_Analysis import calculate_orc_performance
 except ImportError as exc:  # pragma: no cover
     raise SystemExit("❌ Could not import ORC_Analysis.py – keep the file in the "
                     "same directory or adjust PYTHONPATH.") from exc
@@ -223,7 +231,10 @@ def _calculate_pec_pump(W_kW: float) -> float:
 
 def check_orc_toggle_consistency():
     """ORC_Analysis.pyのトグル状態とconfig.pyの設定値の整合性を1回だけチェックする。"""
-    from ORC_Analysis import calculate_orc_performance_from_heat_source
+    try:
+        from .ORC_Analysis import calculate_orc_performance_from_heat_source
+    except ImportError:
+        from ORC_Analysis import calculate_orc_performance_from_heat_source
     analysis_flags = {}
     try:
         dummy_result = calculate_orc_performance_from_heat_source(

@@ -10,9 +10,9 @@ import os
 # プロジェクトルートをPythonパスに追加
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ORC_analysis.config import set_component_setting, validate_component_settings
-from ORC_analysis.ORC_Analysis import calculate_orc_performance_from_heat_source
-from ORC_analysis.optimization import optimize_orc_with_components, sensitivity_analysis_components
+from .config import set_component_setting, validate_component_settings
+from .ORC_Analysis import calculate_orc_performance_from_heat_source
+from .optimization import optimize_orc_with_components, sensitivity_analysis_components
 
 
 def example_basic_orc():

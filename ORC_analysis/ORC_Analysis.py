@@ -18,7 +18,12 @@ It includes:
 import numpy as np
 import pandas as pd
 import CoolProp.CoolProp as CP  # Thermophysical properties
-from ORC_analysis.config import get_component_setting
+
+# Try relative import first, fallback to absolute import for direct execution
+try:
+    from .config import get_component_setting
+except ImportError:
+    from config import get_component_setting
 
 DEFAULT_T0 = 298.15            # Dead‑state temperature [K] (25 °C)
 DEFAULT_FLUID = "R245fa"       # Working fluid (HFC‑245fa)

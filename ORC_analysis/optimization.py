@@ -5,8 +5,14 @@
 
 import numpy as np
 from scipy.optimize import minimize_scalar, minimize
-from ORC_analysis.ORC_Analysis import calculate_orc_performance_from_heat_source
-from ORC_analysis.config import get_component_setting
+
+# Try relative import first, fallback to absolute import for direct execution
+try:
+    from .ORC_Analysis import calculate_orc_performance_from_heat_source
+    from .config import get_component_setting
+except ImportError:
+    from ORC_Analysis import calculate_orc_performance_from_heat_source
+    from config import get_component_setting
 
 
 def calculate_safe_power_limits(
