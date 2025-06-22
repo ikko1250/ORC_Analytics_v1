@@ -263,7 +263,7 @@ def calculate_orc_performance(
     # -----------------------------------------------------------------------
     # 5. Cycle KPIs
     # -----------------------------------------------------------------------
-    W_net = W_t - W_p - Q_preheater_kW - Q_superheater_kW  # subtract electrical consumption
+    W_net = W_t - W_p  # 予熱器・過熱器は電力消費ではない（熱交換器）
     Q_total_in = Q_e + Q_preheater_kW + Q_superheater_kW
     eta_th = W_net / Q_total_in if Q_total_in else np.nan
     eps_ex = W_net / E_heat_e if E_heat_e else np.nan
