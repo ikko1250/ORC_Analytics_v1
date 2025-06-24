@@ -26,10 +26,18 @@ COMPONENT_SETTINGS = {
     'use_preheater': False,  # 予熱器を利用する場合はTrue
     'use_superheater': False,  # 過熱器を利用する場合はTrue
     'preheater_params': {
-        # 例: 'Q_kW': 0.0, 'LMTD_K': 10.0
+        'max_power_kW': 50.0,  # 最大電力 [kW]
+        'efficiency': 0.95,    # 効率 [-]
     },
     'superheater_params': {
-        # 例: 'Q_kW': 0.0, 'LMTD_K': 20.0
+        'max_power_kW': 100.0,  # 最大電力 [kW]
+        'efficiency': 0.95,     # 効率 [-]
+    },
+    'optimization_settings': {
+        'enable_optimization': True,  # 最適化を有効にする場合はTrue
+        'target_evap_out_temp_K': None,  # 蒸発器出口目標温度 [K]
+        'max_iterations': 100,  # 最大反復回数
+        'tolerance': 1e-6,      # 収束判定値
     }
 }
 
@@ -77,7 +85,7 @@ def validate_component_settings() -> None:
         TypeError: 型が不正な場合
         ValueError: 値が不正な場合
     """
-    required_keys = ['use_preheater', 'use_superheater', 'preheater_params', 'superheater_params']
+    required_keys = ['use_preheater', 'use_superheater', 'preheater_params', 'superheater_params', 'optimization_settings']
     
     # Check for required keys
     for key in required_keys:
@@ -96,5 +104,16 @@ def validate_component_settings() -> None:
     
     if not isinstance(COMPONENT_SETTINGS['superheater_params'], dict):
         raise TypeError("'superheater_params' must be a dictionary")
+    
+    if not isinstance(COMPONENT_SETTINGS['optimization_settings'], dict):
+        raise TypeError("'optimization_settings' must be a dictionary")
+    
+    # Value validation for optimization settings
+    opt_settings = COMPONENT_SETTINGS['optimization_settings']
+    if 'max_iterations' in opt_settings and opt_settings['max_iterations'] <= 0:
+        raise ValueError("'max_iterations' must be positive")
+    
+    if 'tolerance' in opt_settings and opt_settings['tolerance'] <= 0:
+        raise ValueError("'tolerance' must be positive")
     
     logger.info("Component settings validation passed")
