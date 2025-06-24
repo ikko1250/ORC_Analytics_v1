@@ -29,7 +29,7 @@ except:
 
 
 def calculate_orc_with_preheater_optimization(T_htf_in, Vdot_htf, T_cond, eta_pump, eta_turb, Q_preheater_kW):
-    """予熱器最適化を含むORC計算
+    """予熱器最適化を含む高度なORC計算 - ORC_Analysis.pyとの統合版
     
     Args:
         T_htf_in: 熱源入口温度 [K]
@@ -43,92 +43,80 @@ def calculate_orc_with_preheater_optimization(T_htf_in, Vdot_htf, T_cond, eta_pu
         dict: 計算結果
     """
     try:
-        # 熱源物性（水として仮定）
-        rho_htf = 1000  # kg/m³
-        cp_htf = 4180   # J/kg/K
-        m_htf = Vdot_htf * rho_htf  # 熱源質量流量 [kg/s]
+        # ORC_Analysis.pyの高度な計算を使用
+        result = calculate_orc_performance_from_heat_source(
+            T_htf_in=T_htf_in,
+            Vdot_htf=Vdot_htf,
+            T_cond=T_cond,
+            eta_pump=eta_pump,
+            eta_turb=eta_turb,
+            Q_preheater_kW_input=Q_preheater_kW,
+            Q_superheater_kW_input=0.0,
+            fluid_orc="R245fa",
+            fluid_htf="Water",
+            superheat_C=10.0,
+            pinch_delta_K=10.0,
+            P_htf=101.325e3,
+        )
         
-        # 予熱器による蒸発温度の向上計算
+        if result is None:
+            print(f"⚠️  ORC計算失敗: 予熱器電力={Q_preheater_kW:.1f}kW")
+            return None
+        
+        # ベースライン計算（予熱器なし）
         if Q_preheater_kW > 0:
-            # 予熱器による温度上昇（簡単な近似）
-            Q_preheater_W = Q_preheater_kW * 1000  # W
-            # 利用可能な最大熱量（熱源温度差10Kを仮定）
-            Q_max_available = m_htf * cp_htf * 10  # W
+            baseline_result = calculate_orc_performance_from_heat_source(
+                T_htf_in=T_htf_in,
+                Vdot_htf=Vdot_htf,
+                T_cond=T_cond,
+                eta_pump=eta_pump,
+                eta_turb=eta_turb,
+                Q_preheater_kW_input=0.0,
+                Q_superheater_kW_input=0.0,
+                fluid_orc="R245fa",
+                fluid_htf="Water",
+                superheat_C=10.0,
+                pinch_delta_K=10.0,
+                P_htf=101.325e3,
+            )
             
-            if Q_preheater_W > Q_max_available:
-                print(f"⚠️  予熱器熱量({Q_preheater_kW:.1f}kW)が利用可能熱量({Q_max_available/1000:.3f}kW)を超過")
-                return None
-            
-            # 蒸発温度の向上
-            delta_T_evap = Q_preheater_W / (m_htf * cp_htf)  # K
-            T_evap_enhanced = T_htf_in - 20 + delta_T_evap  # ベース蒸発温度から向上
-            
-            # 蒸発温度の制限（熱源温度以下）
-            T_evap_enhanced = min(T_evap_enhanced, T_htf_in - 10)
-            
-            # 実際の温度上昇
-            actual_delta_T = T_evap_enhanced - (T_htf_in - 20)
-            
-            # 作動流体流量の再計算（簡単な近似）
-            # 利用可能熱量が減少することを考慮
-            remaining_heat_capacity = Q_max_available - Q_preheater_W
-            mass_flow_ratio = remaining_heat_capacity / Q_max_available
-            
-            print(f"予熱器最適化計算: Q_preheater={Q_preheater_kW:.1f}kW")
-            print(f"  ベースライン: W_net=8.073kW, m_orc=2.031kg/s")
-            print(f"  蒸発温度: {T_htf_in-20-273.15:.1f}°C → {T_evap_enhanced-273.15:.1f}°C (+{actual_delta_T:.1f}K)")
-            print(f"  利用可能熱量: {remaining_heat_capacity/1000:.3f}kW, HTF温度差: {remaining_heat_capacity/(m_htf * cp_htf):.1f}K")
-            print(f"  作動流体流量: 2.031kg/s → {2.031*mass_flow_ratio:.3f}kg/s")
-            
-        else:
-            T_evap_enhanced = T_htf_in - 20  # ベース蒸発温度
-            mass_flow_ratio = 1.0
-            actual_delta_T = 0.0
+            if baseline_result:
+                W_net_improvement = ((result['W_net [kW]'] - baseline_result['W_net [kW]']) / baseline_result['W_net [kW]']) * 100
+                eta_improvement = ((result['η_th [-]'] - baseline_result['η_th [-]']) / baseline_result['η_th [-]']) * 100
+                
+                print(f"予熱器最適化計算: Q_preheater={Q_preheater_kW:.1f}kW")
+                print(f"  ベースライン: W_net={baseline_result['W_net [kW]']:.3f}kW, η_th={baseline_result['η_th [-]']:.4f}")
+                print(f"  予熱器あり: W_net={result['W_net [kW]']:.3f}kW, η_th={result['η_th [-]']:.4f}")
+                print(f"  改善効果: W_net={W_net_improvement:+.2f}%, η_th={eta_improvement:+.2f}%")
+                
+                if result.get('preheater_constraint_active', False):
+                    print(f"  ⚠️  予熱器制約が活性化: 実際の予熱器熱量={result['Q_preheater [kW]']:.1f}kW")
         
-        # ORC解析の実行
-        # 簡略化されたORC性能計算
-        T_evap = T_evap_enhanced
-        
-        # 基本的なORC性能計算（簡単な近似）
-        if Q_preheater_kW == 0:
-            # ベースラインケース
-            W_net = 8.073  # kW
-            eta_th = 0.0196
-            Q_in = 411.447
-        else:
-            # 予熱器ありケース：効率向上と出力変化を計算
-            # カルノー効率ベースの近似
-            eta_carnot_base = 1 - T_cond / (T_htf_in - 20)
-            eta_carnot_enhanced = 1 - T_cond / T_evap_enhanced
-            eta_improvement_factor = eta_carnot_enhanced / eta_carnot_base
-            
-            # 実際の効率改善（カルノー効率の30%程度を仮定）
-            eta_th = 0.0196 * eta_improvement_factor
-            
-            # 質量流量減少による出力変化を考慮
-            W_net = 8.073 * mass_flow_ratio * eta_improvement_factor
-            Q_in = W_net / eta_th
-        
-        print(f"  最終結果: W_net={W_net:.3f}kW ({((W_net-8.073)/8.073*100):+.2f}%), η_th={eta_th:.4f} ({((eta_th-0.0196)/0.0196*100):+.2f}%)")
-        
-        # 結果の構築
-        result = {
-            'W_net [kW]': W_net,
-            'η_th [-]': eta_th,
-            'Q_in [kW]': Q_in,
-            'Q_out [kW]': -(Q_in - W_net),
-            'ε_ex [-]': 0.35,  # 仮定値
-            'Q_preheater [kW]': Q_preheater_kW,
-            'Q_superheater [kW]': 0.0,
-            'T_evap_enhanced [°C]': T_evap_enhanced - 273.15,
-            'delta_T_evap [K]': actual_delta_T,
-            'is_constrained': Q_preheater_kW > 0 and (T_evap_enhanced >= T_htf_in - 10)
+        # 既存フォーマットに変換
+        enhanced_result = {
+            'W_net [kW]': result['W_net [kW]'],
+            'η_th [-]': result['η_th [-]'],
+            'Q_in [kW]': result['Q_in [kW]'],
+            'Q_out [kW]': result['Q_out [kW]'],
+            'ε_ex [-]': result['ε_ex [-]'],
+            'Q_preheater [kW]': result['Q_preheater [kW]'],
+            'Q_superheater [kW]': result['Q_superheater [kW]'],
+            'T_evap_enhanced [°C]': result['T_turb_in [°C]'] - 10,  # 過熱度を考慮した蒸発温度
+            'delta_T_evap [K]': max(0, result['T_turb_in [°C]'] - (T_htf_in - 273.15 - 30)),  # 蒸発温度上昇
+            'is_constrained': result.get('preheater_constraint_active', False) or result.get('superheater_constraint_active', False),
+            # 高度な指標を追加
+            'E_dest_Total [kW]': result.get('E_dest_Total [kW]', 0),
+            'P_evap [bar]': result.get('P_evap [bar]', 0),
+            'm_orc [kg/s]': result.get('m_orc [kg/s]', 0),
+            'Evap_dT_lm [K]': result.get('Evap_dT_lm [K]', 0),
+            'preheater_constraint_active': result.get('preheater_constraint_active', False),
+            'Q_preheater_input [kW]': result.get('Q_preheater_input [kW]', Q_preheater_kW),
         }
         
-        return result
+        return enhanced_result
         
     except Exception as e:
-        print(f"ORC計算エラー: {e}")
+        print(f"高度なORC計算エラー: {e}")
         return None
 
 

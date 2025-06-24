@@ -147,22 +147,112 @@ def calculate_orc_performance(
     s2  = _get_coolprop_property("SMASS", fluid, P_Pa=P2, H_J_per_kg=h2 * J_PER_KJ, divisor=J_PER_KJ)
     states["2"] = {"h": h2, "s": s2, "T": T2, "P": P2}
 
-    # (2b) after preheater (if used)
-    h2b = h2 + Q_preheater_kW / m_orc  # add preheater energy
-    T2b = _get_coolprop_property("T", fluid, P_Pa=P2, H_J_per_kg=h2b * J_PER_KJ)
+    # (2b) after preheater (if used) - 出力向上のための修正版
+    if Q_preheater_kW > 0:
+        # 予熱器による最大可能エンタルピー増加
+        delta_h_preheater = Q_preheater_kW / m_orc  # kJ/kg
+        h2b_target = h2 + delta_h_preheater
+        
+        # 温度制限チェック: 蒸発温度-5K以下に制限
+        T_sat_evap = _get_coolprop_property("T", fluid, P_Pa=P2, Q_frac=1)
+        T_max_preheater = T_sat_evap - 5.0  # 5K マージン
+        
+        # 目標温度の計算
+        try:
+            T2b_target = _get_coolprop_property("T", fluid, P_Pa=P2, H_J_per_kg=h2b_target * J_PER_KJ)
+            
+            if T2b_target > T_max_preheater:
+                # 温度制限に達した場合は制限温度で再計算
+                T2b = T_max_preheater
+                h2b = _get_coolprop_property("HMASS", fluid, T_K=T2b, P_Pa=P2, divisor=J_PER_KJ)
+                Q_preheater_actual = m_orc * (h2b - h2)  # 実際の予熱器熱量
+            else:
+                T2b = T2b_target
+                h2b = h2b_target
+                Q_preheater_actual = Q_preheater_kW
+                
+        except Exception as e:
+            # CoolProp計算エラーの場合は予熱器なしとして処理
+            print(f"Warning: Preheater calculation failed, using no preheater: {e}")
+            T2b = T2
+            h2b = h2
+            Q_preheater_actual = 0.0
+    else:
+        T2b = T2
+        h2b = h2
+        Q_preheater_actual = 0.0
+    
+    # プリヒーターによる蒸発器負荷軽減を記録（後でタービン入口温度上昇に使用）
+    preheater_evap_reduction = Q_preheater_actual  # kW
+    
     s2b = _get_coolprop_property("SMASS", fluid, P_Pa=P2, H_J_per_kg=h2b * J_PER_KJ, divisor=J_PER_KJ)
     states["2b"] = {"h": h2b, "s": s2b, "T": T2b, "P": P2}
 
-    # (3) evaporator outlet
-    T3_evap = T_turb_in  # assuming for now, will be modified
+    # (3) evaporator outlet - 基本蒸発温度（飽和蒸気）
+    # プリヒーターがある場合は、基本的に飽和蒸気温度で蒸発器を出る
     P3 = P_evap
-    h3_evap = _get_coolprop_property("HMASS", fluid, T_K=T3_evap, P_Pa=P3, divisor=J_PER_KJ)
-    s3_evap = _get_coolprop_property("SMASS", fluid, T_K=T3_evap, P_Pa=P3, divisor=J_PER_KJ)
+    T3_evap = _get_coolprop_property("T", fluid, P_Pa=P3, Q_frac=1)  # 飽和蒸気温度
+    h3_evap = _get_coolprop_property("HMASS", fluid, P_Pa=P3, Q_frac=1, divisor=J_PER_KJ)  # 飽和蒸気エンタルピー
+    s3_evap = _get_coolprop_property("SMASS", fluid, P_Pa=P3, Q_frac=1, divisor=J_PER_KJ)  # 飽和蒸気エントロピー
     states["3"] = {"h": h3_evap, "s": s3_evap, "T": T3_evap, "P": P3}
 
-    # (3b) after superheater (if used)
-    h3b = h3_evap + Q_superheater_kW / m_orc  # add superheater energy
-    T3b = _get_coolprop_property("T", fluid, P_Pa=P3, H_J_per_kg=h3b * J_PER_KJ)
+    # (3b) after superheater (if used) - 出力向上のための修正版
+    # 基本タービン入口温度を設定
+    T_turb_in_base = T_turb_in  # 元の入力値を保存
+    
+    # 新しいアプローチ: プリヒーターとスーパーヒーターの効果を直接タービン入口温度に適用
+    # プリヒーターは蒸発器負荷を減らし、その分でタービン入口温度を上げる
+    # スーパーヒーターは直接タービン入口温度を上げる
+    
+    # 各コンポーネントの温度上昇効果を積算
+    total_temp_boost_kW = preheater_evap_reduction + Q_superheater_kW
+    
+    if total_temp_boost_kW > 0:
+        # 総熱量をエンタルピー増加に変換
+        delta_h_total = total_temp_boost_kW / m_orc  # kJ/kg
+        h_enhanced = h3_evap + delta_h_total
+        
+        try:
+            T_turb_in_enhanced = _get_coolprop_property("T", fluid, P_Pa=P3, H_J_per_kg=h_enhanced * J_PER_KJ)
+        except Exception as e:
+            print(f"Warning: Enhanced temperature calculation failed: {e}")
+            T_turb_in_enhanced = T_turb_in_base
+    else:
+        T_turb_in_enhanced = T_turb_in_base
+    
+    # 温度制限チェック: 臨界温度-10K以下に制限
+    try:
+        T_critical = CP.PropsSI("Tcrit", fluid)
+        T_max_limit = T_critical - 10.0  # 10K マージン
+        
+        if T_turb_in_enhanced > T_max_limit:
+            T3b = T_max_limit
+        else:
+            T3b = T_turb_in_enhanced
+            
+        # 過熱温度での物性計算
+        if T3b > T3_evap + 1.0:  # 過熱状態であることを確認
+            h3b = _get_coolprop_property("HMASS", fluid, T_K=T3b, P_Pa=P3, divisor=J_PER_KJ)
+        else:
+            # 飽和温度に近い場合は飽和蒸気状態を使用
+            h3b = h3_evap
+            T3b = T3_evap
+        
+        # 実際のスーパーヒーター熱量（蒸発器出口からの増加分のみ）
+        # 注意: ここでは実際に使用された熱量を計算
+        Q_superheater_actual = m_orc * (h3b - h3_evap) if h3b > h3_evap else 0.0
+        
+    except Exception as e:
+        # CoolProp計算エラーの場合は基本温度を使用
+        print(f"Warning: Enhanced temperature calculation failed, using base temperature: {e}")
+        T3b = T_turb_in_base
+        if T3b > T3_evap + 1.0:  # 過熱状態であることを確認
+            h3b = _get_coolprop_property("HMASS", fluid, T_K=T3b, P_Pa=P3, divisor=J_PER_KJ)
+        else:
+            h3b = h3_evap
+            T3b = T3_evap
+        Q_superheater_actual = m_orc * (h3b - h3_evap) if h3b > h3_evap else 0.0
+    
     s3b = _get_coolprop_property("SMASS", fluid, P_Pa=P3, H_J_per_kg=h3b * J_PER_KJ, divisor=J_PER_KJ)
     states["3b"] = {"h": h3b, "s": s3b, "T": T3b, "P": P3}
     
@@ -208,9 +298,13 @@ def calculate_orc_performance(
 
     # (b) Preheater --------------------------------------------------------
     if Q_preheater_kW > 0:
+        # 実際の予熱器熱量を使用（温度制限考慮後）
+        Q_preheater_used = Q_preheater_actual if 'Q_preheater_actual' in locals() else Q_preheater_kW
         results["Preheater"] = {
-            "Q [kW]": Q_preheater_kW,
-            "E_dest [kW]": Q_preheater_kW - m_orc * (psi["2b"] - psi["2"]),
+            "Q [kW]": Q_preheater_used,
+            "Q_input [kW]": Q_preheater_kW,  # 入力熱量
+            "E_dest [kW]": Q_preheater_used - m_orc * (psi["2b"] - psi["2"]),
+            "constraint_active": Q_preheater_used < Q_preheater_kW,
         }
 
     # (c) Evaporator --------------------------------------------------------
@@ -235,9 +329,13 @@ def calculate_orc_performance(
 
     # (d) Superheater -------------------------------------------------------
     if Q_superheater_kW > 0:
+        # 実際の過熱器熱量を使用（温度制限考慮後）
+        Q_superheater_used = Q_superheater_actual if 'Q_superheater_actual' in locals() else Q_superheater_kW
         results["Superheater"] = {
-            "Q [kW]": Q_superheater_kW,
-            "E_dest [kW]": Q_superheater_kW - m_orc * (psi["3b"] - psi["3"]),
+            "Q [kW]": Q_superheater_used,
+            "Q_input [kW]": Q_superheater_kW,  # 入力熱量
+            "E_dest [kW]": Q_superheater_used - m_orc * (psi["3b"] - psi["3"]),
+            "constraint_active": Q_superheater_used < Q_superheater_kW,
         }
 
     # (e) Turbine -----------------------------------------------------------
@@ -264,7 +362,12 @@ def calculate_orc_performance(
     # 5. Cycle KPIs
     # -----------------------------------------------------------------------
     W_net = W_t - W_p  # 予熱器・過熱器は電力消費ではない（熱交換器）
-    Q_total_in = Q_e + Q_preheater_kW + Q_superheater_kW
+    
+    # 実際に使用された熱量を計算
+    Q_preheater_used = Q_preheater_actual if 'Q_preheater_actual' in locals() else 0.0
+    Q_superheater_used = Q_superheater_actual if 'Q_superheater_actual' in locals() else 0.0
+    
+    Q_total_in = Q_e + Q_preheater_used + Q_superheater_used
     eta_th = W_net / Q_total_in if Q_total_in else np.nan
     eps_ex = W_net / E_heat_e if E_heat_e else np.nan
 
@@ -274,8 +377,12 @@ def calculate_orc_performance(
         "Q_out [kW]": Q_c,
         "η_th [-]": eta_th,
         "ε_ex [-]": eps_ex,
-        "Q_preheater [kW]": Q_preheater_kW,
-        "Q_superheater [kW]": Q_superheater_kW,
+        "Q_preheater [kW]": Q_preheater_used,
+        "Q_superheater [kW]": Q_superheater_used,
+        "Q_preheater_input [kW]": Q_preheater_kW,  # 入力値
+        "Q_superheater_input [kW]": Q_superheater_kW,  # 入力値
+        "preheater_constraint_active": Q_preheater_used < Q_preheater_kW if Q_preheater_kW > 0 else False,
+        "superheater_constraint_active": Q_superheater_used < Q_superheater_kW if Q_superheater_kW > 0 else False,
     }
 
     comp_df = pd.DataFrame(results).T
