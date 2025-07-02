@@ -213,13 +213,20 @@ def calculate_orc_performance(
     }
 
     # (d) Condenser ---------------------------------------------------------
-    Q_c = m_orc * (h1 - h4)         # should be < 0
+    Q_c = m_orc * (h1 - h4)         # Heat removed (should be < 0)
     T_cold_avg = 0.5 * (T4 + T1)
-    E_heat_c = exergy_of_heat(Q_c, T_cold_avg, T0)
+
+    # Calculate the magnitude of exergy rejected with heat (positive value)
+    E_heat_rejected_magnitude = exergy_of_heat(abs(Q_c), T_cold_avg, T0)
+
+    # Calculate exergy destruction (should be positive)
+    # Exergy balance: E_in - E_out - E_heat_rejected = E_dest
+    E_dest_Condenser = m_orc * (psi["4"] - psi["1"]) - E_heat_rejected_magnitude
+
     results["Condenser"] = {
         "Q [kW]": Q_c,
-        "E_heat [kW]": E_heat_c,
-        "E_dest [kW]": m_orc * (psi["4"] - psi["1"]) + E_heat_c,
+        "E_heat_rejected [kW]": E_heat_rejected_magnitude,
+        "E_dest [kW]": E_dest_Condenser,
         "T_cold_avg [K]": T_cold_avg,
     }
 
