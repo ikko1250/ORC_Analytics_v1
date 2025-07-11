@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import CoolProp.CoolProp as CP  # Thermophysical properties
 from .config import get_component_setting
+from .heat_source import get_heat_source_profile
 
 DEFAULT_T0 = 298.15            # Dead‑state temperature [K] (25 °C)
 DEFAULT_FLUID = "R245fa"       # Working fluid (HFC‑245fa)
@@ -299,13 +300,18 @@ def calculate_orc_performance_from_heat_source(
         P_evap = _get_coolprop_property("P", fluid_orc, T_K=T_sat_evap, Q_frac=1)
         T_turb_in = T_sat_evap + superheat_K
 
-        # Assuming T_htf_in is the average temperature for property calculation if not specified otherwise
-        # For more accuracy, properties could be evaluated at mean temp or integrated
-        rho_htf = _get_coolprop_property("DMASS", fluid_htf, T_K=T_htf_in, P_Pa=P_htf) # 密度の計算
-        Cpm_htf = _get_coolprop_property("CPMASS", fluid_htf, T_K=T_htf_in, P_Pa=P_htf) # J/kg.K, 定圧比熱の計算
-        m_htf = rho_htf * Vdot_htf # 質量流量の計算
+        # 1. 熱源プロファイルの取得
+        # 熱源に関する計算を外部モジュールに委譲する
         T_htf_out = T_sat_evap + pinch_delta_K # 出口温度の計算
-        Q_available = m_htf * Cpm_htf * (T_htf_in - T_htf_out) / J_PER_KJ  # kW, 熱量の計算
+        heat_source = get_heat_source_profile(
+            T_htf_in=T_htf_in,
+            Vdot_htf=Vdot_htf,
+            T_htf_out=T_htf_out,
+            heat_source_type="liquid",
+            fluid_htf=fluid_htf,
+            P_htf=P_htf
+        )
+        Q_available = heat_source.Q_available / J_PER_KJ  # kW, 熱量の計算
         if Q_available <= 0:
             return None
 
