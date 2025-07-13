@@ -102,8 +102,8 @@ def area_from_duty(Q_kW: float, U: float, lmtd_K: float) -> float:
 # for heat exchangers, or power (kW) for turbine and pump.
 # Formulas from Table 5 of the reference paper.
 
-def _calculate_pec_evaporator(area_m2: float) -> float:
-    """PEC [$] for Horizontal Tube Evaporator.
+def _calculate_pec_evaporator_liquid(area_m2: float) -> float:
+    """PEC [$] for Horizontal Tube Evaporator (Liquid heat source).
     Formula based on Seider et al. (2016), Table 22.4, item (d).
     Cost = min_cost * (area_ft2 / min_area_ft2) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
     """
@@ -120,6 +120,32 @@ def _calculate_pec_evaporator(area_m2: float) -> float:
 
     cost = min_cost * (area_ft2 / min_area_ft2) ** scaling_factor * (CURRENT_CEPCI / listed_CEPCI)
     return cost
+
+def _calculate_pec_evaporator_gas(area_m2: float) -> float:
+    """PEC [$] for Finned Tube Evaporator (Gas heat source).
+    This is a placeholder formula. The cost per area is assumed to be 3x higher
+    than the liquid-based counterpart due to material and construction differences.
+    USERS MUST VALIDATE AND UPDATE THIS FORMULA.
+    """
+    if area_m2 <= 0:
+        return 0.0
+
+    # 仮のコスト係数を設定（液体用の約3倍のコスト/m2を想定）
+    # Seiderの式を面積100m2で評価し、それを3倍した値を基準とする
+    # Liquid cost at 100m2: _calculate_pec_evaporator_liquid(100) -> ~$175,000
+    # 175000 / 100 m2 = 1750 $/m2.  Gas cost -> 5250 $/m2
+    # 簡単のため、面積に比例する線形な式を仮に採用する
+    cost_per_m2_gas = 5250.0 # 仮の値 ($/m^2)
+    
+    # CEPCI補正
+    # この仮のコスト単価がどの年のものか不明なため、ここでは補正は省略するが、
+    # 本来は基準年のCEPCIで補正が必要
+    # cost = cost_per_m2_gas * area_m2 * (CURRENT_CEPCI / BASE_CEPCI_FOR_GAS_HX)
+    
+    cost = cost_per_m2_gas * area_m2
+    return cost
+
+_calculate_pec_evaporator = _calculate_pec_evaporator_liquid # Default
 
 def _calculate_pec_hot_water_heater(power_kW: float) -> float:
     """PEC [$] for Hot Water Heater (used for Preheater and Superheater).
@@ -269,6 +295,7 @@ def evaluate_orc_economics(
     eta_pump: float,
     eta_turb: float,
     m_orc: float,
+    heat_source_type: str = "liquid", # 熱源タイプを追加
     T0: float = 298.15,
     P0: float = 101.325e3,
     extra_duties: Optional[Dict[str, Tuple[float, float]]] = None,
@@ -283,6 +310,8 @@ def evaluate_orc_economics(
     _check_consistency_once()
 
     # 1) Run thermodynamic model ––––––––––––––––––––––––––––––––––––––––
+    # Note: The thermodynamic model called here does not depend on heat_source_type yet.
+    # This will need to be updated if the thermo calculations diverge.
     psi_df, comp_df, kpi = calculate_orc_performance(
         P_evap,
         T_turb_in,
@@ -292,7 +321,6 @@ def evaluate_orc_economics(
         m_orc=m_orc,
         T0=T0,
         P0=P0,
-        # pass‑through HTF info only for Evaporator dT_lm calc (ignored here)
     )
 
     # 2) Assemble heat duties & LMTDs ––––––––––––––––––––––––––––––––––––
@@ -314,9 +342,8 @@ def evaluate_orc_economics(
 
     # Dispatch dictionary for PEC calculation functions
     # Maps component name to its specific PEC calculation function.
-    # Heat exchanger functions expect area (m²), power component functions expect power (kW).
     COMPONENT_PEC_CALCULATORS = {
-        "Evaporator": _calculate_pec_evaporator,
+        "Evaporator": _calculate_pec_evaporator_liquid, # Default
         "Superheater": _calculate_pec_hot_water_heater, # Updated
         "Preheater": _calculate_pec_hot_water_heater,  # Updated
         "Regenerator": _calculate_pec_regenerator,
@@ -324,6 +351,17 @@ def evaluate_orc_economics(
         "Turbine": _calculate_pec_turbine,
         "Pump": _calculate_pec_pump,
     }
+
+    # Select Evaporator PEC function based on heat source type
+    if heat_source_type == 'gas':
+        COMPONENT_PEC_CALCULATORS["Evaporator"] = _calculate_pec_evaporator_gas
+        # U値もガス用に変更すべきだが、現状は仮で同じ値を使う
+        # U_VALUES["Evaporator"] = 0.05 # 例: kW/m^2K (ガスは熱伝達率が低い)
+        logger.info("Using GAS-specific PEC calculation for Evaporator.")
+    else:
+        COMPONENT_PEC_CALCULATORS["Evaporator"] = _calculate_pec_evaporator_liquid
+        logger.info("Using LIQUID-specific PEC calculation for Evaporator.")
+
 
     # Calculate PEC for Heat Exchangers
     # `duties` contains "Evaporator", "Condenser", and any valid `extra_duties`

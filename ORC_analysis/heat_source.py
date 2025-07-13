@@ -48,58 +48,62 @@ def get_heat_source_profile(
         P_gas = kwargs.get('P_gas', 101325)  # デフォルト圧力
         gas_composition = kwargs.get('gas_composition', None)
         mass_flow_mode = kwargs.get('mass_flow_mode', False)
-        T_gas_out_min = kwargs.get('T_gas_out_min', T_htf_out)
-        
-        # デフォルトガス組成（天然ガス燃焼）
+        # 安全のため、デフォルトの最低出口温度を酸露点腐食リスクの低い120℃ (393.15 K)に設定
+        T_gas_out_min = kwargs.get('T_gas_out_min', 393.15)
+
+        # デフォルトガス組成（天然ガス燃焼排ガスを想定）
         if gas_composition is None:
             gas_composition = {
                 "CO2": 0.11,
-                "H2O": 0.20, 
+                "H2O": 0.20,
                 "N2": 0.69
             }
-        
+
         # 組成の妥当性チェック
         total_fraction = sum(gas_composition.values())
         if abs(total_fraction - 1.0) > 0.01:
             raise ValueError(f"Gas composition fractions sum to {total_fraction:.3f}, should be 1.0")
-        
+
         # CoolProp混合物文字列を作成
         coolprop_components = []
         coolprop_mapping = {
             "CO2": "CO2",
-            "H2O": "Water", 
+            "H2O": "Water",
             "N2": "Nitrogen",
             "O2": "Oxygen",
             "SO2": "SulfurDioxide",
             "CO": "CarbonMonoxide"
         }
-        
+
         for species, fraction in gas_composition.items():
             if species in coolprop_mapping and fraction > 0:
                 coolprop_components.append(f"{coolprop_mapping[species]}[{fraction}]")
-        
+
         if not coolprop_components:
             raise ValueError("No valid gas components found for CoolProp calculation")
-        
+
         mixture_string = "&".join(coolprop_components)
-        
+
         try:
-            # ガス物性計算
-            rho_gas = CP.PropsSI("D", "T", T_htf_in, "P", P_gas, mixture_string)
-            cp_gas = CP.PropsSI("C", "T", T_htf_in, "P", P_gas, mixture_string)
-            
             # 質量流量計算
             if mass_flow_mode:
-                m_dot_gas = Vdot_htf  # kg/s
+                m_dot_gas = Vdot_htf  # 単位: kg/s
             else:
-                m_dot_gas = Vdot_htf * rho_gas  # m3/s → kg/s
-            
-            # 利用可能熱量計算
-            Q_available = m_dot_gas * cp_gas * (T_htf_in - T_gas_out_min)
-            
+                # 体積流量(m3/s)から質量流量(kg/s)へ変換
+                rho_gas_in = CP.PropsSI("D", "T", T_htf_in, "P", P_gas, mixture_string)
+                m_dot_gas = Vdot_htf * rho_gas_in
+
+            # エンタルピー差を用いて、より正確な熱量を計算
+            h_in = CP.PropsSI("H", "T", T_htf_in, "P", P_gas, mixture_string)
+            h_out = CP.PropsSI("H", "T", T_gas_out_min, "P", P_gas, mixture_string)
+            Q_available = m_dot_gas * (h_in - h_out)
+
+            # 平均比熱を計算（参考値として）
+            cp_gas_avg = (h_in - h_out) / (T_htf_in - T_gas_out_min)
+
             return HeatSourceProfile(
                 m_dot=m_dot_gas,
-                cp=cp_gas,
+                cp=cp_gas_avg,
                 T_in=T_htf_in,
                 T_out_min=T_gas_out_min,
                 Q_available=Q_available

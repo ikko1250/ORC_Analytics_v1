@@ -261,63 +261,76 @@ def calculate_orc_performance_from_heat_source(
     eta_turb,
     *,
     fluid_orc: str = DEFAULT_FLUID,
-    fluid_htf: str = "Water",
     superheat_C: float = 10.0,
     pinch_delta_K: float = 10.0,
-    P_htf: float = 101.325e3,
     T0: float = DEFAULT_T0,
     P0: float = DEFAULT_P0,
+    # --- Heat source specific ---
+    heat_source_type: str = "liquid",
+    fluid_htf: str = "Water",
+    P_htf: float = 101.325e3,
+    gas_composition: dict = None,
+    P_gas: float = 101325,
+    mass_flow_mode: bool = False,
+    T_gas_out_min: float = None
 ):
-    """Compute ORC KPIs when driven by a single‑phase heat source."""
+    """Compute ORC KPIs when driven by a heat source (liquid or gas)."""
     try:
         superheat_K = superheat_C
         T_sat_evap = T_htf_in - pinch_delta_K - superheat_K
 
         # --- 臨界温度・凝縮温度チェック ---
-
         if not hasattr(calculate_orc_performance_from_heat_source, '_tcrit_cache'):
             calculate_orc_performance_from_heat_source._tcrit_cache = {}
 
         if fluid_orc not in calculate_orc_performance_from_heat_source._tcrit_cache:
-            # キャッシュにない場合：CoolProp で計算してキャッシュに保存
             try:
                 Tcrit = CP.PropsSI("Tcrit", fluid_orc)
                 calculate_orc_performance_from_heat_source._tcrit_cache[fluid_orc] = Tcrit
-
             except (ValueError, RuntimeError, KeyError) as e:
                 raise ValueError(f"Could not get critical temperature for fluid '{fluid_orc}': {str(e)}")
         else:
             Tcrit = calculate_orc_performance_from_heat_source._tcrit_cache[fluid_orc]
 
         if T_sat_evap >= Tcrit or T_sat_evap <= T_cond + 1.0:
-            raise ValueError(
-                f"Calculated evaporator saturation temperature ({T_sat_evap:.2f} K) is invalid. "
-                f"It must be below critical temperature ({Tcrit:.2f} K) and above condenser temperature + 1K ({T_cond + 1.0:.2f} K). "
-                f"(Input T_htf_in: {T_htf_in:.2f} K, T_cond: {T_cond:.2f} K, pinch: {pinch_delta_K:.2f} K, superheat: {superheat_K:.2f} K)"
-            )
+            # This state is thermodynamically impossible, so we return None
+            # The calling function should handle this case gracefully
+            return None
         # --- 臨界温度・凝縮温度チェックここまで ---
 
         P_evap = _get_coolprop_property("P", fluid_orc, T_K=T_sat_evap, Q_frac=1)
         T_turb_in = T_sat_evap + superheat_K
 
         # 1. 熱源プロファイルの取得
-        # 熱源に関する計算を外部モジュールに委譲する
-        T_htf_out = T_sat_evap + pinch_delta_K # 出口温度の計算
-        heat_source = get_heat_source_profile(
-            T_htf_in=T_htf_in,
-            Vdot_htf=Vdot_htf,
-            T_htf_out=T_htf_out,
-            heat_source_type="liquid",
-            fluid_htf=fluid_htf,
-            P_htf=P_htf
-        )
-        Q_available = heat_source.Q_available / J_PER_KJ  # kW, 熱量の計算
-        if Q_available <= 0:
+        T_htf_out = T_sat_evap + pinch_delta_K
+
+        if heat_source_type == "gas":
+            heat_source = get_heat_source_profile(
+                T_htf_in=T_htf_in,
+                Vdot_htf=Vdot_htf,
+                T_htf_out=T_htf_out,
+                heat_source_type="gas",
+                gas_composition=gas_composition,
+                P_gas=P_gas,
+                mass_flow_mode=mass_flow_mode,
+                T_gas_out_min=T_gas_out_min
+            )
+        else:  # Default to liquid
+            heat_source = get_heat_source_profile(
+                T_htf_in=T_htf_in,
+                Vdot_htf=Vdot_htf,
+                T_htf_out=T_htf_out,
+                heat_source_type="liquid",
+                fluid_htf=fluid_htf,
+                P_htf=P_htf
+            )
+
+        if heat_source is None or heat_source.Q_available <= 0:
             return None
+        Q_available = heat_source.Q_available / J_PER_KJ  # kW
 
         # quick ORC enthalpy rise to estimate m_orc
         T1 = T_cond
-        # P1 = _get_coolprop_property("P", fluid_orc, T_K=T1, Q_frac=0) # Not strictly needed for h1, s1
         h1 = _get_coolprop_property("HMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
         s1 = _get_coolprop_property("SMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
         h2s = _get_coolprop_property("HMASS", fluid_orc, P_Pa=P_evap, S_J_per_kgK=s1 * J_PER_KJ, divisor=J_PER_KJ)
@@ -344,21 +357,18 @@ def calculate_orc_performance_from_heat_source(
         )
 
         # Populate output dictionary
-        output = cycle_kpi.copy() # Start with cycle KPIs
+        output = cycle_kpi.copy()
         output["m_orc [kg/s]"] = m_orc
         output["T_htf_in [°C]"] = T_htf_in - 273.15
         output["T_htf_out [°C]"] = T_htf_out - 273.15
-        output["Vdot_htf [m3/s]"] = Vdot_htf # Keep original input for grouping
+        output["Vdot_htf [m3/s]"] = Vdot_htf
         output["P_evap [bar]"] = P_evap / PA_PER_BAR
         output["T_turb_in [°C]"] = T_turb_in - 273.15
-        # Access DataFrame using .loc["index", "column"]
         output["E_dest_Pump [kW]"] = comp_results.loc["Pump", "E_dest [kW]"]
         output["E_dest_Evaporator [kW]"] = comp_results.loc["Evaporator", "E_dest [kW]"]
         output["E_dest_Turbine [kW]"] = comp_results.loc["Turbine", "E_dest [kW]"]
         output["E_dest_Condenser [kW]"] = comp_results.loc["Condenser", "E_dest [kW]"]
-        # Use DataFrame column sum for total exergy destruction
         output["E_dest_Total [kW]"] = comp_results["E_dest [kW]"].sum()
-        # Add other potentially useful info from comp_results if needed
         output["Evap_dT_lm [K]"] = comp_results.loc["Evaporator", "ΔT_lm [K]"]
         output["Evap_E_heat_in [kW]"] = comp_results.loc["Evaporator", "E_heat [kW]"]
 
