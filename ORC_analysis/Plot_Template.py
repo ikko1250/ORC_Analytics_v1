@@ -50,13 +50,40 @@ def get_nan_econ_dict(T_htf_in_C, Vdot_m3s):
 # --- Function to run a single ORC stage (performance and economics) (from Plot_IHIdual.py) ---
 def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_val,
                          orc_fluid, htf_fluid, sc_C, pinch_K,
-                         econ_params_dict, extra_duties_config_dict):
+                         econ_params_dict, extra_duties_config_dict, 
+                         heat_source_type="liquid", gas_config=None):
     """Calculates performance and economics for a single ORC stage."""
-    perf_res = calculate_orc_performance_from_heat_source(
-        T_htf_in=T_htf_in_K, Vdot_htf=Vdot_m3s, T_cond=T_cond_K,
-        eta_pump=eta_pump_val, eta_turb=eta_turb_val, fluid_orc=orc_fluid,
-        fluid_htf=htf_fluid, superheat_C=sc_C, pinch_delta_K=pinch_K
-    )
+    
+    # 熱源タイプに応じた計算分岐
+    if heat_source_type == "gas" and gas_config is not None:
+        perf_res = calculate_orc_performance_from_heat_source(
+            T_htf_in=T_htf_in_K, 
+            Vdot_htf=Vdot_m3s, 
+            T_cond=T_cond_K,
+            eta_pump=eta_pump_val, 
+            eta_turb=eta_turb_val, 
+            fluid_orc=orc_fluid,
+            superheat_C=sc_C, 
+            pinch_delta_K=pinch_K,
+            # ガス専用パラメータ
+            heat_source_type="gas",
+            gas_composition=gas_config["default_composition"],
+            P_gas=gas_config["P_gas"],
+            mass_flow_mode=gas_config["mass_flow_mode"],
+            T_gas_out_min=T_cond_K + gas_config["T_gas_out_offset_K"]
+        )
+    else:  # liquid (デフォルト動作)
+        perf_res = calculate_orc_performance_from_heat_source(
+            T_htf_in=T_htf_in_K, 
+            Vdot_htf=Vdot_m3s, 
+            T_cond=T_cond_K,
+            eta_pump=eta_pump_val, 
+            eta_turb=eta_turb_val, 
+            fluid_orc=orc_fluid,
+            fluid_htf=htf_fluid, 
+            superheat_C=sc_C, 
+            pinch_delta_K=pinch_K
+        )
     T_htf_in_C = T_htf_in_K - 273.15
     if perf_res is None:
         return get_nan_perf_dict(T_htf_in_C, Vdot_m3s), get_nan_econ_dict(T_htf_in_C, Vdot_m3s)
@@ -74,7 +101,7 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
             ratios = extra_duties_config_dict.get("ratios", {})
             lmtds = extra_duties_config_dict.get("lmtds", {})
             if "Superheater" in ratios and "Superheater" in lmtds:
-                current_extra_duties["Superheater"] = (
+                 current_extra_duties["Superheater"] = (
                     Q_in * ratios["Superheater"], lmtds["Superheater"]
                 )
             if "Regenerator" in ratios and "Regenerator" in lmtds:
@@ -113,6 +140,9 @@ config = {
         "fluid_htf": "Water",
         "superheat_C": 8.0,  # ORC過熱度
         "pinch_delta_K": 10.0, # ピンチデルタ
+        
+        # 新規追加：熱源タイプ選択
+        "heat_source_type": "liquid",  # "liquid" または "gas"
     },
     "economic_params": {
         "interest_rate": 0.05,  # 金利 (5%)
@@ -125,11 +155,31 @@ config = {
         "ratios": {"Superheater": 0.2, "Regenerator": 0.1}, # Q_in に対する熱負荷の割合
         "lmtds": {"Superheater": 15.0, "Regenerator": 10.0} # LMTD [K]
     },
+    # sweep_params を熱源タイプ別に分離
     "sweep_params": {
-        "T_htf_min_C": 70,
-        "T_htf_max_C": 99,
-        "n_T_points": 100, # 元の n_T_points
-        "Vdot_values_m3h": np.arange(20, 50 + 5, 5),  # 20から50まで5刻み
+        "liquid": {  # 既存の液体熱源用
+            "T_htf_min_C": 70,
+            "T_htf_max_C": 99,
+            "n_T_points": 100,
+            "Vdot_values_m3h": np.arange(20, 50 + 5, 5),  # 20から50まで5刻み
+        },
+        "gas": {     # 新規ガス熱源用
+            "T_htf_min_C": 300,
+            "T_htf_max_C": 800,
+            "n_T_points": 100,
+            "Vdot_values_m3h": np.arange(1000, 5000 + 500, 500),  # 1000から5000まで500刻み
+        }
+    },
+    # 新規追加：ガス熱源専用パラメータ
+    "gas_params": {
+        "default_composition": {
+            "CO2": 0.11,
+            "H2O": 0.20,
+            "N2": 0.69
+        },
+        "P_gas": 101325,
+        "mass_flow_mode": False,
+        "T_gas_out_offset_K": 20,  # T_cond_K + このオフセット値
     },
     "run_params": {
         "base_filename": "ORC_analysis_IHI20_template_ver", # ベースファイル名変更
@@ -147,11 +197,40 @@ config = {
 thermo_cfg = config["thermo_params"]
 econ_cfg = config["economic_params"]
 extra_duties_cfg = config["extra_duties_config"]
-sweep_cfg = config["sweep_params"]
 run_cfg = config["run_params"]
 plot_cfg = config["plot_params"]
 
-T_htf_values_K = np.linspace(sweep_cfg["T_htf_min_C"] + 273.15, sweep_cfg["T_htf_max_C"] + 273.15, sweep_cfg["n_T_points"])
+# 新規追加：熱源タイプに応じた動的設定
+heat_source_type = thermo_cfg["heat_source_type"]
+
+if heat_source_type == "gas":
+    sweep_cfg = config["sweep_params"]["gas"]
+    gas_cfg = config["gas_params"]
+    
+    # ガス用の出口温度を自動計算
+    T_gas_out_min = thermo_cfg["T_cond_K"] + gas_cfg["T_gas_out_offset_K"]
+    
+    print(f"ガス熱源モードで実行します")
+    print(f"組成: {gas_cfg['default_composition']}")
+    print(f"温度範囲: {sweep_cfg['T_htf_min_C']}°C - {sweep_cfg['T_htf_max_C']}°C")
+    print(f"流量範囲: {sweep_cfg['Vdot_values_m3h'][0]} - {sweep_cfg['Vdot_values_m3h'][-1]} m³/h")
+    
+else:  # liquid (デフォルト)
+    sweep_cfg = config["sweep_params"]["liquid"]
+    gas_cfg = None
+    T_gas_out_min = None
+    
+    print(f"液体熱源モードで実行します（従来通り）")
+    print(f"熱源流体: {thermo_cfg['fluid_htf']}")
+    print(f"温度範囲: {sweep_cfg['T_htf_min_C']}°C - {sweep_cfg['T_htf_max_C']}°C")
+    print(f"流量範囲: {sweep_cfg['Vdot_values_m3h'][0]} - {sweep_cfg['Vdot_values_m3h'][-1]} m³/h")
+
+# 温度配列生成（共通）
+T_htf_values_K = np.linspace(
+    sweep_cfg["T_htf_min_C"] + 273.15, 
+    sweep_cfg["T_htf_max_C"] + 273.15, 
+    sweep_cfg["n_T_points"]
+)
 
 # --------------------------------------------------
 # 2. 計算
@@ -164,9 +243,14 @@ for Vdot_m3h in sweep_cfg["Vdot_values_m3h"]:
     Vdot_m3s = Vdot_m3h / 3600.0
     for T_htf_K in T_htf_values_K:
         perf_data, econ_data = run_single_orc_stage(
-            T_htf_K, Vdot_m3s, thermo_cfg["T_cond_K"], thermo_cfg["eta_pump"], thermo_cfg["eta_turb"],
-            thermo_cfg["fluid_orc"], thermo_cfg["fluid_htf"], thermo_cfg["superheat_C"], thermo_cfg["pinch_delta_K"],
-            econ_cfg, extra_duties_cfg
+            T_htf_K, Vdot_m3s, 
+            thermo_cfg["T_cond_K"], thermo_cfg["eta_pump"], thermo_cfg["eta_turb"],
+            thermo_cfg["fluid_orc"], thermo_cfg["fluid_htf"], 
+            thermo_cfg["superheat_C"], thermo_cfg["pinch_delta_K"],
+            econ_cfg, extra_duties_cfg,
+            # 新規追加：熱源タイプとガス設定
+            heat_source_type=heat_source_type,
+            gas_config=gas_cfg
         )
         results_list.append(perf_data)
         econ_list.append(econ_data)
@@ -206,10 +290,27 @@ def setup_axis(ax, xlabel, ylabel, legend_title, title=None):
     if ax.has_data():
          ax.legend(title=legend_title)
 
+# プロットタイトルを熱源タイプに応じて動的生成
+def generate_plot_title(heat_source_type, sweep_cfg, thermo_cfg, gas_cfg=None):
+    """熱源タイプに応じたプロットタイトルを生成"""
+    common_conditions = (f"η_p={thermo_cfg['eta_pump']:.2f}, η_t={thermo_cfg['eta_turb']:.2f}, "
+                        f"作動流体={thermo_cfg['fluid_orc']}, "
+                        f"過熱度={thermo_cfg['superheat_C']:.1f}°C, ピンチ={thermo_cfg['pinch_delta_K']:.1f}K")
+    
+    if heat_source_type == "gas" and gas_cfg is not None:
+        comp_str = ', '.join([f"{k}:{v:.0%}" for k, v in gas_cfg['default_composition'].items()])
+        heat_source_info = f"排ガス熱源({comp_str})"
+    else:
+        heat_source_info = f"熱源={thermo_cfg['fluid_htf']}"
+    
+    return (f"熱源温度={sweep_cfg['T_htf_min_C']:.1f}〜{sweep_cfg['T_htf_max_C']:.1f}°C, "
+           f"{heat_source_info}, {common_conditions}")
+
+# プロットタイトル生成
+plot_conditions = generate_plot_title(heat_source_type, sweep_cfg, thermo_cfg, gas_cfg)
+
 # 性能プロット
-fig1_title = (f"ORC性能プロット\n条件: 熱源温度={sweep_cfg['T_htf_min_C']:.1f}〜{sweep_cfg['T_htf_max_C']:.1f}°C, "
-              f"η_p={thermo_cfg['eta_pump']:.2f}, η_t={thermo_cfg['eta_turb']:.2f}, 作動流体={thermo_cfg['fluid_orc']}, "
-              f"熱源={thermo_cfg['fluid_htf']}, 過熱度={thermo_cfg['superheat_C']:.1f}°C, ピンチ={thermo_cfg['pinch_delta_K']:.1f}K")
+fig1_title = f"ORC性能プロット\n条件: {plot_conditions}"
 
 fig1, axes1 = plt.subplots(4, 1, figsize=plot_cfg["fig1_size"], sharex=True)
 fig1.suptitle(fig1_title, fontsize=12, y=0.985)
@@ -234,16 +335,16 @@ plot_lines(axes1[3], results_df, "T_htf_in [°C]", "ε_ex [-]", sweep_cfg["Vdot_
 setup_axis(axes1[3], "熱源入口温度 [°C]", "エクセルギー効率 ε [-]", "熱源流量")
 
 plt.tight_layout()
-filename1 = f"{run_cfg['base_filename']}_performance.png"
+# ファイル名に熱源タイプを含める
+base_filename = f"{run_cfg['base_filename']}_{heat_source_type}"
+filename1 = f"{base_filename}_performance.png"
 plt.savefig(filename1, dpi=300)
 print(f"性能プロットを {filename1} に保存しました。")
 plt.close(fig1)
 
 # 経済性プロット（経済分析結果が存在する場合）
 if econ_df is not None and not econ_df.empty:
-    fig2_title = (f"ORC経済性プロット\n条件: 熱源温度={sweep_cfg['T_htf_min_C']:.1f}〜{sweep_cfg['T_htf_max_C']:.1f}°C, "
-                  f"η_p={thermo_cfg['eta_pump']:.2f}, η_t={thermo_cfg['eta_turb']:.2f}, 作動流体={thermo_cfg['fluid_orc']}, "
-                  f"熱源={thermo_cfg['fluid_htf']}, 過熱度={thermo_cfg['superheat_C']:.1f}°C, ピンチ={thermo_cfg['pinch_delta_K']:.1f}K")
+    fig2_title = f"ORC経済性プロット\n条件: {plot_conditions}"
 
     fig2, axes2 = plt.subplots(3, 1, figsize=plot_cfg["fig2_size"], sharex=True)
     fig2.suptitle(fig2_title, fontsize=12)
@@ -261,7 +362,7 @@ if econ_df is not None and not econ_df.empty:
     setup_axis(axes2[2], "熱源入口温度 [°C]", "単純回収期間 [年]", "熱源流量")
 
     plt.tight_layout()
-    filename2 = f"{run_cfg['base_filename']}_economic.png"
+    filename2 = f"{base_filename}_economic.png"
     plt.savefig(filename2, dpi=300)
     print(f"経済性プロットを {filename2} に保存しました。")
     plt.close(fig2)
@@ -270,9 +371,7 @@ if econ_df is not None and not econ_df.empty:
     def plot_stacked_bars(df_to_plot, Vdot_m3h_val, x_col, cost_suffix, fig_title_prefix, ylabel_text, filename_suffix, base_fname, fig_size):
         fig, ax = plt.subplots(figsize=fig_size)
         full_title = (f"{fig_title_prefix}コンポーネント別コスト 積み上げ図 (Vdot={Vdot_m3h_val:.1f} m³/h)\n"
-                      f"条件: 熱源温度={sweep_cfg['T_htf_min_C']:.1f}〜{sweep_cfg['T_htf_max_C']:.1f}°C, η_p={thermo_cfg['eta_pump']:.2f}, "
-                      f"η_t={thermo_cfg['eta_turb']:.2f}, 作動流体={thermo_cfg['fluid_orc']}, 熱源={thermo_cfg['fluid_htf']}, "
-                      f"過熱度={thermo_cfg['superheat_C']:.1f}°C, ピンチ={thermo_cfg['pinch_delta_K']:.1f}K")
+                      f"条件: {plot_conditions}")
         fig.suptitle(full_title, fontsize=10)
 
         df_sub = df_to_plot[df_to_plot["Vdot_htf [m3/s]"].round(6) == (Vdot_m3h_val / 3600.0).round(6)]
@@ -299,15 +398,15 @@ if econ_df is not None and not econ_df.empty:
     Vdot_for_stacked_plot = sweep_cfg["Vdot_values_m3h"][0]
     plot_stacked_bars(econ_df, Vdot_for_stacked_plot, "T_htf_in [°C]", "_cost [$]",
                       "", "コンポーネント別コスト [千$]", "component_costs",
-                      run_cfg['base_filename'], plot_cfg["fig3_size"])
+                      base_filename, plot_cfg["fig3_size"])
 
 # 計算結果をCSVファイルに出力
-csv_filename_perf = f"{run_cfg['base_filename']}_performance.csv"
+csv_filename_perf = f"{base_filename}_performance.csv"
 results_df.to_csv(csv_filename_perf, index=False, encoding='utf-8-sig')
 print(f"性能計算結果を {csv_filename_perf} に保存しました。")
 
 # 経済計算結果をCSVファイルに出力（結果が存在する場合）
 if econ_df is not None and not econ_df.empty:
-    econ_csv_filename = f"{run_cfg['base_filename']}_economic.csv"
+    econ_csv_filename = f"{base_filename}_economic.csv"
     econ_df.to_csv(econ_csv_filename, index=False, encoding='utf-8-sig')
     print(f"経済計算結果を {econ_csv_filename} に保存しました。")
