@@ -51,18 +51,21 @@ def get_nan_econ_dict(T_htf_in_C, Vdot_m3s):
 def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_val,
                          orc_fluid, htf_fluid, sc_C, pinch_K,
                          econ_params_dict, extra_duties_config_dict, 
-                         heat_source_type="liquid", gas_config=None):
+                         heat_source_type="liquid", gas_config=None, thermo_params=None):
     """Calculates performance and economics for a single ORC stage."""
     
     # 熱源タイプに応じた計算分岐
     if heat_source_type == "gas" and gas_config is not None:
+        # ガス熱源の場合は高温対応作動流体を使用
+        gas_fluid = thermo_params.get("gas_fluid_orc", orc_fluid) if thermo_params else orc_fluid
+        
         perf_res = calculate_orc_performance_from_heat_source(
             T_htf_in=T_htf_in_K, 
             Vdot_htf=Vdot_m3s, 
             T_cond=T_cond_K,
             eta_pump=eta_pump_val, 
             eta_turb=eta_turb_val, 
-            fluid_orc=orc_fluid,
+            fluid_orc=gas_fluid,
             superheat_C=sc_C, 
             pinch_delta_K=pinch_K,
             # ガス専用パラメータ
@@ -138,11 +141,14 @@ config = {
         "eta_turb": 0.80,
         "fluid_orc": DEFAULT_FLUID,
         "fluid_htf": "Water",
+        
+        # ガス熱源用の高温対応作動流体設定
+        "gas_fluid_orc": "Toluene",  # ガス熱源用（高温対応）
         "superheat_C": 8.0,  # ORC過熱度
         "pinch_delta_K": 10.0, # ピンチデルタ
         
         # 新規追加：熱源タイプ選択
-        "heat_source_type": "liquid",  # "liquid" または "gas"
+        "heat_source_type": "gas",  # "liquid" または "gas"
     },
     "economic_params": {
         "interest_rate": 0.05,  # 金利 (5%)
@@ -164,10 +170,10 @@ config = {
             "Vdot_values_m3h": np.arange(20, 50 + 5, 5),  # 20から50まで5刻み
         },
         "gas": {     # 新規ガス熱源用
-            "T_htf_min_C": 300,
-            "T_htf_max_C": 800,
-            "n_T_points": 100,
-            "Vdot_values_m3h": np.arange(1000, 5000 + 500, 500),  # 1000から5000まで500刻み
+            "T_htf_min_C": 160,
+            "T_htf_max_C": 300,
+            "n_T_points": 30,
+             "Vdot_values_m3h": np.arange(30000, 60000 + 10000, 10000),  # 30000から60000まで10000刻み
         }
     },
     # 新規追加：ガス熱源専用パラメータ
@@ -250,7 +256,8 @@ for Vdot_m3h in sweep_cfg["Vdot_values_m3h"]:
             econ_cfg, extra_duties_cfg,
             # 新規追加：熱源タイプとガス設定
             heat_source_type=heat_source_type,
-            gas_config=gas_cfg
+            gas_config=gas_cfg,
+            thermo_params=thermo_cfg
         )
         results_list.append(perf_data)
         econ_list.append(econ_data)
