@@ -26,6 +26,7 @@ COMPONENT_SETTINGS = {
     'use_preheater': False,  # 予熱器を利用する場合はTrue
     'use_superheater': False,  # 過熱器を利用する場合はTrue
     'use_regenerator': False,  # 再生器を利用する場合はTrue
+    'use_separated_evap_superheat': False,  # 蒸発器・過熱器分離計算を利用する場合はTrue
     'preheater_params': {
         # 例: 'Q_kW': 0.0, 'LMTD_K': 10.0
     },
@@ -63,7 +64,7 @@ def set_component_setting(key: str, value: Any) -> None:
         ValueError: 値が不正な場合
     """
     # Type validation
-    if key in ['use_preheater', 'use_superheater', 'use_regenerator'] and not isinstance(value, bool):
+    if key in ['use_preheater', 'use_superheater', 'use_regenerator', 'use_separated_evap_superheat'] and not isinstance(value, bool):
         raise TypeError(f"Setting '{key}' must be a boolean, got {type(value).__name__}")
     
     if key in ['preheater_params', 'superheater_params', 'regenerator_params'] and not isinstance(value, dict):

@@ -148,12 +148,12 @@ config = {
         "pinch_delta_K": 10.0, # ピンチデルタ
         
         # 新規追加：熱源タイプ選択
-        "heat_source_type": "gas",  # "liquid" または "gas"
+        "heat_source_type": "liquid",  # "liquid" または "gas"
     },
     "economic_params": {
         "interest_rate": 0.05,  # 金利 (5%)
         "project_life": 20,     # プロジェクト期間 [年]
-        "annual_hours": 8000,   # 年間運転時間 [時間]
+        "annual_hours": 4900,   # 年間運転時間 [時間], ex) 8000時間
         "elec_price": 0.12,     # 電力販売価格 [$/kWh]
         "maint_factor": 1.06,   # メンテナンスファクター (evaluate_orc_economicsでは φ として使用)
     },

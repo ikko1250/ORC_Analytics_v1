@@ -20,6 +20,7 @@ import pandas as pd
 import CoolProp.CoolProp as CP  # Thermophysical properties
 from .config import get_component_setting
 from .heat_source import get_heat_source_profile
+from .separated_evap_superheat import calculate_separated_evap_superheat
 
 DEFAULT_T0 = 298.15            # Dead‑state temperature [K] (25 °C)
 DEFAULT_FLUID = "R245fa"       # Working fluid (HFC‑245fa)
@@ -375,12 +376,41 @@ def calculate_orc_performance_from_heat_source(
         # トグル状態取得
         use_preheater = get_component_setting('use_preheater', False)
         use_superheater = get_component_setting('use_superheater', False)
+        use_separated_calculation = get_component_setting('use_separated_evap_superheat', False)
         preheater_params = get_component_setting('preheater_params', {}) if use_preheater else None
         superheater_params = get_component_setting('superheater_params', {}) if use_superheater else None
+
+        # 分離計算が有効な場合は詳細解析を実行
+        if use_separated_calculation:
+            separated_results = calculate_separated_evap_superheat(
+                P_evap=P_evap,
+                T_turb_in=T_turb_in,
+                T_cond=T_cond,
+                eta_pump=eta_pump,
+                eta_turb=eta_turb,
+                fluid=fluid_orc,
+                m_orc=m_orc,
+                T0=T0,
+                P0=P0,
+                T_htf_in=T_htf_in,
+                T_htf_out=T_htf_out,
+                superheat_K=superheat_K
+            )
+            
+            # 分離計算の結果を出力に追加
+            output["separated_analysis"] = separated_results["summary"]
+            output["evap_separated"] = separated_results["components"]["Evaporator"]
+            output["superheat_separated"] = separated_results["components"]["Superheater"]
+            
+            # LMTD誤差の警告
+            lmtd_error = separated_results["summary"]["LMTD_Analysis"]["LMTD_error [%]"]
+            if not np.isnan(lmtd_error) and abs(lmtd_error) > 10:
+                print(f"Warning: LMTD calculation error is {lmtd_error:.1f}% due to combined evap+superheat calculation")
 
         # トグル状態とパラメータを出力に含める
         output["use_preheater"] = use_preheater
         output["use_superheater"] = use_superheater
+        output["use_separated_evap_superheat"] = use_separated_calculation
         output["preheater_params"] = preheater_params
         output["superheater_params"] = superheater_params
         return output
