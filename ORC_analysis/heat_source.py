@@ -190,6 +190,31 @@ class HeatSourceProfile:
     T_in: float           # 熱交換器への入口温度 [K]
     T_out_min: float      # 熱交換器からの最低出口温度 [K]
     Q_available: float    # 利用可能熱量 [W]
+    
+    def get_temp_for_heat(self, Q_exchanged: float) -> float:
+        """
+        指定された熱量が熱源から奪われた後の熱源温度を計算する。
+        一定比熱を仮定した線形T-Q関係を使用。
+        
+        Args:
+            Q_exchanged (float): 交換される熱量 [W]
+            
+        Returns:
+            float: 熱源流体の温度 [K]
+        """
+        if self.Q_available <= 0:
+            return self.T_out_min
+        
+        # Q_exchangedは高温端（T_in）から始まる
+        fraction_of_heat = Q_exchanged / self.Q_available
+        
+        if fraction_of_heat >= 1.0:
+            # 利用可能な熱量を超える場合は最低温度を返す
+            return self.T_out_min
+        
+        # T_inとT_out_minの間で線形補間
+        T_intermediate = self.T_in - fraction_of_heat * (self.T_in - self.T_out_min)
+        return T_intermediate
 
 def get_heat_source_profile(
     T_htf_in: float,

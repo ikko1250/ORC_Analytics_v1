@@ -148,7 +148,7 @@ config = {
         "pinch_delta_K": 10.0, # ピンチデルタ
         
         # 新規追加：熱源タイプ選択
-        "heat_source_type": "gas",  # "liquid" または "gas"
+        "heat_source_type": "liquid",  # "liquid" または "gas"
     },
     "economic_params": {
         "interest_rate": 0.05,  # 金利 (5%)

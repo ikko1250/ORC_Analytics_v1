@@ -116,6 +116,7 @@ def calculate_orc_performance(
     P0=DEFAULT_P0,
     T_htf_in=None,
     T_htf_out=None,
+    heat_exchanger_data: dict = None,
 ):
     """Return (ψ‑table, component‑table, cycle‑kpi) for a simple ORC."""
 
@@ -157,6 +158,20 @@ def calculate_orc_performance(
     s4  = _get_coolprop_property("SMASS", fluid, P_Pa=P4, H_J_per_kg=h4 * J_PER_KJ, divisor=J_PER_KJ)
     states["4"] = {"h": h4, "s": s4, "T": T4, "P": P4}
 
+    # --- ADDED: Add intermediate states for detailed heat exchange ---
+    if heat_exchanger_data and heat_exchanger_data.get("use_detailed_hex", False):
+        # State 2a: Preheater outlet (Saturated Liquid)
+        h2a = _get_coolprop_property("HMASS", fluid, P_Pa=P_evap, Q_frac=0, divisor=J_PER_KJ)
+        s2a = _get_coolprop_property("SMASS", fluid, P_Pa=P_evap, Q_frac=0, divisor=J_PER_KJ)
+        T2a = _get_coolprop_property("T", fluid, P_Pa=P_evap, Q_frac=0)
+        states["2a"] = {"h": h2a, "s": s2a, "T": T2a, "P": P_evap}
+        
+        # State 2b: Evaporator outlet (Saturated Vapor)
+        h2b = _get_coolprop_property("HMASS", fluid, P_Pa=P_evap, Q_frac=1, divisor=J_PER_KJ)
+        s2b = _get_coolprop_property("SMASS", fluid, P_Pa=P_evap, Q_frac=1, divisor=J_PER_KJ)
+        T2b = _get_coolprop_property("T", fluid, P_Pa=P_evap, Q_frac=1)
+        states["2b"] = {"h": h2b, "s": s2b, "T": T2b, "P": P_evap}
+
     # --- 3.3 Specific exergy ψ at each state --------------------------------
     psi = {k: specific_exergy(v["h"], v["s"], h0, s0, T0) for k, v in states.items()}
 
@@ -184,25 +199,74 @@ def calculate_orc_performance(
         "η_exergy [-]": W_p_rev / W_p if W_p else np.nan,
     }
 
-    # (b) Evaporator --------------------------------------------------------
-    Q_e = m_orc * (h3 - h2)
-
-    if T_htf_in is not None and T_htf_out is not None:
-        dT_lm = lmtd_counter_current(T_htf_in, T_htf_out, T2, T3)
-        T_hot_avg = 0.5 * (T_htf_in + T_htf_out)
+    # (b) Evaporator (or Heat Exchanger System) -----------------------------
+    if heat_exchanger_data and heat_exchanger_data.get("use_detailed_hex", False):
+        # Detailed calculation for Preheater, Evaporator, Superheater
+        # Preheater
+        Q_pre = m_orc * (states["2a"]["h"] - states["2"]["h"])
+        T_htf_in_pre = heat_exchanger_data["T_htf_mid2"]
+        T_htf_out_pre = heat_exchanger_data["T_htf_out"]
+        dT_lm_pre = lmtd_counter_current(T_htf_in_pre, T_htf_out_pre, states["2"]["T"], states["2a"]["T"])
+        T_hot_avg_pre = 0.5 * (T_htf_in_pre + T_htf_out_pre)
+        E_heat_pre = exergy_of_heat(Q_pre, T_hot_avg_pre, T0)
+        results["Preheater"] = {
+            "Q [kW]": Q_pre, "E_heat [kW]": E_heat_pre,
+            "E_dest [kW]": E_heat_pre - m_orc * (psi["2a"] - psi["2"]),
+            "ε [-]": m_orc * (psi["2a"] - psi["2"]) / E_heat_pre if E_heat_pre else np.nan,
+            "ΔT_lm [K]": dT_lm_pre,
+        }
+        
+        # Evaporator (2a → 2b)
+        Q_evap = m_orc * (states["2b"]["h"] - states["2a"]["h"])
+        T_htf_in_evap = heat_exchanger_data["T_htf_mid1"]
+        T_htf_out_evap = heat_exchanger_data["T_htf_mid2"]
+        dT_lm_evap = lmtd_counter_current(T_htf_in_evap, T_htf_out_evap, states["2a"]["T"], states["2b"]["T"])
+        T_hot_avg_evap = 0.5 * (T_htf_in_evap + T_htf_out_evap)
+        E_heat_evap = exergy_of_heat(Q_evap, T_hot_avg_evap, T0)
+        results["Evaporator"] = {
+            "Q [kW]": Q_evap, "E_heat [kW]": E_heat_evap,
+            "E_dest [kW]": E_heat_evap - m_orc * (psi["2b"] - psi["2a"]),
+            "ε [-]": m_orc * (psi["2b"] - psi["2a"]) / E_heat_evap if E_heat_evap else np.nan,
+            "ΔT_lm [K]": dT_lm_evap,
+        }
+        
+        # Superheater (2b → 3)
+        Q_super = m_orc * (states["3"]["h"] - states["2b"]["h"])
+        T_htf_in_super = heat_exchanger_data["T_htf_in"]
+        T_htf_out_super = heat_exchanger_data["T_htf_mid1"]
+        dT_lm_super = lmtd_counter_current(T_htf_in_super, T_htf_out_super, states["2b"]["T"], states["3"]["T"])
+        T_hot_avg_super = 0.5 * (T_htf_in_super + T_htf_out_super)
+        E_heat_super = exergy_of_heat(Q_super, T_hot_avg_super, T0)
+        results["Superheater"] = {
+            "Q [kW]": Q_super, "E_heat [kW]": E_heat_super,
+            "E_dest [kW]": E_heat_super - m_orc * (psi["3"] - psi["2b"]),
+            "ε [-]": m_orc * (psi["3"] - psi["2b"]) / E_heat_super if E_heat_super else np.nan,
+            "ΔT_lm [K]": dT_lm_super,
+        }
+        Q_e = Q_pre + Q_evap + Q_super
+        E_heat_e = E_heat_pre + E_heat_evap + E_heat_super
     else:
-        dT_lm = T3 - T2              # fallback dummy
-        T_hot_avg = 0.5 * (T2 + T3)  # fallback if HTF temps not provided
+        # Original simplified calculation
+        Q_e = m_orc * (h3 - h2)
+        T_htf_in = heat_exchanger_data.get("T_htf_in") if heat_exchanger_data else T_htf_in
+        T_htf_out = heat_exchanger_data.get("T_htf_out") if heat_exchanger_data else T_htf_out
+        
+        if T_htf_in is not None and T_htf_out is not None:
+            dT_lm = lmtd_counter_current(T_htf_in, T_htf_out, T2, T3)
+            T_hot_avg = 0.5 * (T_htf_in + T_htf_out)
+        else:
+            dT_lm = T3 - T2              # fallback dummy
+            T_hot_avg = 0.5 * (T2 + T3)  # fallback if HTF temps not provided
 
-    E_heat_e = exergy_of_heat(Q_e, T_hot_avg, T0)
-    results["Evaporator"] = {
-        "Q [kW]": Q_e,
-        "E_heat [kW]": E_heat_e,
-        "E_dest [kW]": E_heat_e - m_orc * (psi["3"] - psi["2"]),
-        "ε [-]": m_orc * (psi["3"] - psi["2"]) / E_heat_e if E_heat_e else np.nan,
-        "ΔT_lm [K]": dT_lm,
-        "T_hot_avg [K]": T_hot_avg,
-    }
+        E_heat_e = exergy_of_heat(Q_e, T_hot_avg, T0)
+        results["Evaporator"] = {
+            "Q [kW]": Q_e,
+            "E_heat [kW]": E_heat_e,
+            "E_dest [kW]": E_heat_e - m_orc * (psi["3"] - psi["2"]),
+            "ε [-]": m_orc * (psi["3"] - psi["2"]) / E_heat_e if E_heat_e else np.nan,
+            "ΔT_lm [K]": dT_lm,
+            "T_hot_avg [K]": T_hot_avg,
+        }
 
     # (c) Turbine -----------------------------------------------------------
     W_t = m_orc * (h3 - h4)
@@ -272,7 +336,8 @@ def calculate_orc_performance_from_heat_source(
     gas_composition: dict = None,
     P_gas: float = 101325,
     mass_flow_mode: bool = False,
-    T_gas_out_min: float = None
+    T_gas_out_min: float = None,
+    use_detailed_hex: bool = True  # ADDED: Toggle for detailed simulation
 ):
     """Compute ORC KPIs when driven by a heat source (liquid or gas)."""
     try:
@@ -301,45 +366,99 @@ def calculate_orc_performance_from_heat_source(
         P_evap = _get_coolprop_property("P", fluid_orc, T_K=T_sat_evap, Q_frac=1)
         T_turb_in = T_sat_evap + superheat_K
 
-        # 1. 熱源プロファイルの取得
-        T_htf_out = T_sat_evap + pinch_delta_K
+        # --- MODIFIED: Detailed Heat Exchange Calculation ---
+        if use_detailed_hex:
+            # 1. Define ORC-side state points for heat exchange
+            h3 = _get_coolprop_property("HMASS", fluid_orc, T_K=T_turb_in, P_Pa=P_evap, divisor=J_PER_KJ)
+            h2b = _get_coolprop_property("HMASS", fluid_orc, P_Pa=P_evap, Q_frac=1, divisor=J_PER_KJ) # sat. vapor
+            h2a = _get_coolprop_property("HMASS", fluid_orc, P_Pa=P_evap, Q_frac=0, divisor=J_PER_KJ) # sat. liquid
+            
+            T1 = T_cond
+            h1 = _get_coolprop_property("HMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
+            s1 = _get_coolprop_property("SMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
+            h2s = _get_coolprop_property("HMASS", fluid_orc, P_Pa=P_evap, S_J_per_kgK=s1 * J_PER_KJ, divisor=J_PER_KJ)
+            h2 = h1 + (h2s - h1) / eta_pump
 
-        if heat_source_type == "gas":
-            heat_source = get_heat_source_profile(
-                T_htf_in=T_htf_in,
-                Vdot_htf=Vdot_htf,
-                T_htf_out=T_htf_out,
-                heat_source_type="gas",
-                gas_composition=gas_composition,
-                P_gas=P_gas,
-                mass_flow_mode=mass_flow_mode,
-                T_gas_out_min=T_gas_out_min
-            )
-        else:  # Default to liquid
-            heat_source = get_heat_source_profile(
-                T_htf_in=T_htf_in,
-                Vdot_htf=Vdot_htf,
-                T_htf_out=T_htf_out,
-                heat_source_type="liquid",
-                fluid_htf=fluid_htf,
-                P_htf=P_htf
-            )
+            delta_h_super = h3 - h2b
+            delta_h_evap = h2b - h2a
+            delta_h_pre = h2a - h2
 
-        if heat_source is None or heat_source.Q_available <= 0:
-            return None
-        Q_available = heat_source.Q_available / J_PER_KJ  # kW
+            # 2. Get heat source profile (total available heat)
+            # We need a temporary T_htf_out to get the profile, let's use the pinch point temp
+            T_htf_out_guess = T_sat_evap + pinch_delta_K
+            if heat_source_type == "gas":
+                heat_source = get_heat_source_profile(
+                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_htf_out_guess,
+                    heat_source_type="gas", gas_composition=gas_composition, P_gas=P_gas,
+                    mass_flow_mode=mass_flow_mode, T_gas_out_min=T_gas_out_min
+                )
+            else:
+                heat_source = get_heat_source_profile(
+                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_htf_out_guess,
+                    heat_source_type="liquid", fluid_htf=fluid_htf, P_htf=P_htf
+                )
+            if heat_source is None or heat_source.Q_available <= 0: 
+                return None
+            
+            # 3. Iteratively find m_orc and heat source temperatures
+            # Energy balance: m_orc * delta_h = m_htf * cp_htf * delta_T_htf
+            # m_orc * (delta_h_super + delta_h_evap + delta_h_pre) = Q_available
+            total_delta_h_orc = (h3 - h2)
+            if total_delta_h_orc <= 0: 
+                return None
+            m_orc = (heat_source.Q_available / J_PER_KJ) / total_delta_h_orc
 
-        # quick ORC enthalpy rise to estimate m_orc
-        T1 = T_cond
-        h1 = _get_coolprop_property("HMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
-        s1 = _get_coolprop_property("SMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
-        h2s = _get_coolprop_property("HMASS", fluid_orc, P_Pa=P_evap, S_J_per_kgK=s1 * J_PER_KJ, divisor=J_PER_KJ)
-        h2 = h1 + (h2s - h1) / eta_pump
-        h3 = _get_coolprop_property("HMASS", fluid_orc, T_K=T_turb_in, P_Pa=P_evap, divisor=J_PER_KJ)
-        delta_h_evap = h3 - h2
-        if delta_h_evap <= 0:
-            return None
-        m_orc = Q_available / delta_h_evap
+            # 4. Calculate intermediate HTF temperatures
+            Q_super = m_orc * delta_h_super
+            T_htf_mid1 = heat_source.get_temp_for_heat(Q_super)
+
+            Q_evap = m_orc * delta_h_evap
+            T_htf_mid2 = heat_source.get_temp_for_heat(Q_super + Q_evap)
+
+            Q_pre = m_orc * delta_h_pre
+            T_htf_out = heat_source.get_temp_for_heat(Q_super + Q_evap + Q_pre)
+
+            # Pinch point check
+            if T_htf_mid2 < (T_sat_evap + pinch_delta_K):
+                 # This indicates the operating point is not feasible with the given pinch.
+                 # A more advanced model would iterate on T_sat_evap, but for now we return None.
+                 return None
+
+            hex_data = {
+                "use_detailed_hex": True,
+                "T_htf_in": T_htf_in, "T_htf_mid1": T_htf_mid1,
+                "T_htf_mid2": T_htf_mid2, "T_htf_out": T_htf_out,
+            }
+        else:
+            # --- Original simplified logic ---
+            T_htf_out = T_sat_evap + pinch_delta_K
+            if heat_source_type == "gas":
+                heat_source = get_heat_source_profile(
+                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_htf_out,
+                    heat_source_type="gas", gas_composition=gas_composition, P_gas=P_gas,
+                    mass_flow_mode=mass_flow_mode, T_gas_out_min=T_gas_out_min
+                )
+            else:
+                heat_source = get_heat_source_profile(
+                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_htf_out,
+                    heat_source_type="liquid", fluid_htf=fluid_htf, P_htf=P_htf
+                )
+            if heat_source is None or heat_source.Q_available <= 0: 
+                return None
+            Q_available = heat_source.Q_available / J_PER_KJ
+            
+            T1 = T_cond
+            h1 = _get_coolprop_property("HMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
+            s1 = _get_coolprop_property("SMASS", fluid_orc, T_K=T1, Q_frac=0, divisor=J_PER_KJ)
+            h2s = _get_coolprop_property("HMASS", fluid_orc, P_Pa=P_evap, S_J_per_kgK=s1 * J_PER_KJ, divisor=J_PER_KJ)
+            h2 = h1 + (h2s - h1) / eta_pump
+            h3 = _get_coolprop_property("HMASS", fluid_orc, T_K=T_turb_in, P_Pa=P_evap, divisor=J_PER_KJ)
+            delta_h_evap = h3 - h2
+            if delta_h_evap <= 0: 
+                return None
+            m_orc = Q_available / delta_h_evap
+            hex_data = {"use_detailed_hex": False, "T_htf_in": T_htf_in, "T_htf_out": T_htf_out}
+        # --- End of modification ---
 
         # Calculate final performance with determined m_orc
         psi_df, comp_results, cycle_kpi = calculate_orc_performance(
@@ -352,8 +471,7 @@ def calculate_orc_performance_from_heat_source(
             m_orc=m_orc,
             T0=T0,
             P0=P0,
-            T_htf_in=T_htf_in,
-            T_htf_out=T_htf_out,
+            heat_exchanger_data=hex_data,
         )
 
         # Populate output dictionary
@@ -365,12 +483,22 @@ def calculate_orc_performance_from_heat_source(
         output["P_evap [bar]"] = P_evap / PA_PER_BAR
         output["T_turb_in [°C]"] = T_turb_in - 273.15
         output["E_dest_Pump [kW]"] = comp_results.loc["Pump", "E_dest [kW]"]
-        output["E_dest_Evaporator [kW]"] = comp_results.loc["Evaporator", "E_dest [kW]"]
+        if use_detailed_hex:
+            output["E_dest_Preheater [kW]"] = comp_results.loc["Preheater", "E_dest [kW]"]
+            output["E_dest_Evaporator [kW]"] = comp_results.loc["Evaporator", "E_dest [kW]"]
+            output["E_dest_Superheater [kW]"] = comp_results.loc["Superheater", "E_dest [kW]"]
+        else:
+            output["E_dest_Evaporator [kW]"] = comp_results.loc["Evaporator", "E_dest [kW]"]
         output["E_dest_Turbine [kW]"] = comp_results.loc["Turbine", "E_dest [kW]"]
         output["E_dest_Condenser [kW]"] = comp_results.loc["Condenser", "E_dest [kW]"]
         output["E_dest_Total [kW]"] = comp_results["E_dest [kW]"].sum()
-        output["Evap_dT_lm [K]"] = comp_results.loc["Evaporator", "ΔT_lm [K]"]
-        output["Evap_E_heat_in [kW]"] = comp_results.loc["Evaporator", "E_heat [kW]"]
+        if use_detailed_hex:
+            output["Preheater_dT_lm [K]"] = comp_results.loc["Preheater", "ΔT_lm [K]"]
+            output["Evap_dT_lm [K]"] = comp_results.loc["Evaporator", "ΔT_lm [K]"]
+            output["Superheater_dT_lm [K]"] = comp_results.loc["Superheater", "ΔT_lm [K]"]
+        else:
+            output["Evap_dT_lm [K]"] = comp_results.loc["Evaporator", "ΔT_lm [K]"]
+            output["Evap_E_heat_in [kW]"] = comp_results.loc["Evaporator", "E_heat [kW]"]
 
         # トグル状態取得
         use_preheater = get_component_setting('use_preheater', False)
@@ -386,6 +514,8 @@ def calculate_orc_performance_from_heat_source(
         return output
     except Exception as e:
         print("ERROR in calculate_orc_performance_from_heat_source:", e)
+        import traceback
+        traceback.print_exc()
         return None
 
 # ---------------------------------------------------------------------------
