@@ -77,8 +77,10 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
     )
     T_htf_in_C = T_htf_in_K - 273.15
     if perf_res is None:
+        print(f"Performance calculation failed for T_htf_in={T_htf_in_C:.1f}°C, skipping economic analysis.")
         return get_nan_perf_dict(T_htf_in_C, Vdot_m3s), get_nan_econ_dict(T_htf_in_C, Vdot_m3s)
 
+    # 性能計算が成功した場合のみ経済計算を実行
     # Initialize econ_res_dict with identifying keys and NaNs for all expected economic outputs
     econ_res_dict = get_nan_econ_dict(perf_res["T_htf_in [°C]"], perf_res["Vdot_htf [m3/s]"])
 

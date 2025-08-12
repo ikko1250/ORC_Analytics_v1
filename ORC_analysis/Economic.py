@@ -309,6 +309,15 @@ def evaluate_orc_economics(
 
     _check_consistency_once()
 
+    # 入力値の妥当性チェック
+    if not all(isinstance(x, (int, float)) and x > 0 for x in [P_evap, T_turb_in, T_cond, m_orc]):
+        logger.error(f"Invalid input parameters: P_evap={P_evap}, T_turb_in={T_turb_in}, T_cond={T_cond}, m_orc={m_orc}")
+        raise ValueError("All thermodynamic parameters must be positive numbers")
+    
+    if not (0 < eta_pump <= 1 and 0 < eta_turb <= 1):
+        logger.error(f"Invalid efficiency values: eta_pump={eta_pump}, eta_turb={eta_turb}")
+        raise ValueError("Pump and turbine efficiencies must be between 0 and 1")
+
     # 1) Run thermodynamic model ––––––––––––––––––––––––––––––––––––––––
     # Note: The thermodynamic model called here does not depend on heat_source_type yet.
     # This will need to be updated if the thermo calculations diverge.
@@ -322,6 +331,17 @@ def evaluate_orc_economics(
         T0=T0,
         P0=P0,
     )
+
+    # 熱力学計算結果の妥当性チェック
+    if psi_df is None or comp_df is None or kpi is None:
+        logger.error("Thermodynamic calculation returned None results")
+        raise ValueError("Thermodynamic calculation failed - no valid results returned")
+    
+    # 基本的な性能指標のチェック
+    W_net = kpi.get("W_net [kW]", 0)
+    if W_net <= 0:
+        logger.warning(f"Net power output is non-positive: W_net={W_net} kW")
+        raise ValueError(f"ORC cycle is not thermodynamically viable - net power output: {W_net} kW")
 
     # 2) Assemble heat duties & LMTDs ––––––––––––––––––––––––––––––––––––
     duties: Dict[str, Tuple[float, float]] = {
@@ -436,15 +456,34 @@ def evaluate_orc_economics(
 
     # 4) Aggregate economics ––––––––––––––––––––––––––––––––––––––––––––
     PEC_total = cost_df["PEC [$]"].sum()
+    
+    # 経済計算の妥当性チェック
+    if PEC_total <= 0:
+        logger.warning(f"Total equipment cost is non-positive: PEC_total=${PEC_total}")
+        raise ValueError(f"Invalid total equipment cost: ${PEC_total}")
+    
     CRF = capital_recovery_factor(i_rate, project_life)
     W_net = kpi["W_net [kW]"]
+
+    # 年間発電量の妥当性チェック
+    annual_generation = W_net * annual_hours
+    if annual_generation <= 0:
+        logger.warning(f"Annual generation is non-positive: {annual_generation} kWh/year")
+        raise ValueError(f"Invalid annual generation: {annual_generation} kWh/year")
 
     # Eq.(14) unit electricity cost – $/kWh
     c_unit = (CRF * PEC_total + φ) / (W_net * annual_hours)
 
     # Simple pay‑back: PEC / annual gross revenue (neglecting O&M)
     annual_revenue = W_net * annual_hours * c_elec
-    PB_simple = PEC_total / (annual_revenue - φ)
+    denominator_pb = annual_revenue - φ
+    PB_simple = PEC_total / denominator_pb if denominator_pb > 0 else float('inf')
+    
+    # 経済指標の妥当性チェック
+    if c_unit <= 0:
+        logger.warning(f"Unit electricity cost is non-positive: {c_unit} $/kWh")
+    if PB_simple <= 0:
+        logger.warning(f"Simple payback period is non-positive: {PB_simple} years")
 
     summary = pd.Series(
         {

@@ -22,7 +22,7 @@ from .config import get_component_setting
 from .heat_source import get_heat_source_profile
 
 DEFAULT_T0 = 298.15            # Dead‑state temperature [K] (25 °C)
-DEFAULT_FLUID = "R245fa"       # Working fluid (HFC‑245fa)
+DEFAULT_FLUID = "R134a"       # Working fluid (HFC‑245fa)
 DEFAULT_P0 = 101.325e3         # Dead‑state pressure [Pa] (1 atm)
 
 J_PER_KJ = 1000.0              # Conversion factor from Joules to kiloJoules
@@ -337,6 +337,10 @@ def calculate_orc_performance_from_heat_source(
     P_gas: float = 101325,
     mass_flow_mode: bool = False,
     T_gas_out_min: float = None,
+    # --- Wet steam specific ---
+    P_steam: float = 101325,
+    quality: float = 0.5,
+    T_htf_out: float = None,  # 湿り蒸気の場合の出口温度
     use_detailed_hex: bool = True  # ADDED: Toggle for detailed simulation
 ):
     """Compute ORC KPIs when driven by a heat source (liquid or gas)."""
@@ -392,6 +396,14 @@ def calculate_orc_performance_from_heat_source(
                     heat_source_type="gas", gas_composition=gas_composition, P_gas=P_gas,
                     mass_flow_mode=mass_flow_mode, T_gas_out_min=T_gas_out_min
                 )
+            elif heat_source_type == "wet_steam":
+                # 湿り蒸気の場合：T_htf_outが指定されていれば使用、なければ推定値を使用
+                T_out_use = T_htf_out if T_htf_out is not None else T_htf_out_guess
+                heat_source = get_heat_source_profile(
+                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_out_use,
+                    heat_source_type="wet_steam", P_steam=P_steam, quality=quality,
+                    mass_flow_mode=mass_flow_mode
+                )
             else:
                 heat_source = get_heat_source_profile(
                     T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_htf_out_guess,
@@ -437,6 +449,14 @@ def calculate_orc_performance_from_heat_source(
                     T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_htf_out,
                     heat_source_type="gas", gas_composition=gas_composition, P_gas=P_gas,
                     mass_flow_mode=mass_flow_mode, T_gas_out_min=T_gas_out_min
+                )
+            elif heat_source_type == "wet_steam":
+                # 湿り蒸気の場合：T_htf_outが指定されていれば使用、なければ計算値を使用
+                T_out_use = T_htf_out if T_htf_out is not None else T_htf_out
+                heat_source = get_heat_source_profile(
+                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_out_use,
+                    heat_source_type="wet_steam", P_steam=P_steam, quality=quality,
+                    mass_flow_mode=mass_flow_mode
                 )
             else:
                 heat_source = get_heat_source_profile(

@@ -190,11 +190,14 @@ class HeatSourceProfile:
     T_in: float           # 熱交換器への入口温度 [K]
     T_out_min: float      # 熱交換器からの最低出口温度 [K]
     Q_available: float    # 利用可能熱量 [W]
+    is_two_phase: bool = False  # 二相流かどうかのフラグ
     
     def get_temp_for_heat(self, Q_exchanged: float) -> float:
         """
         指定された熱量が熱源から奪われた後の熱源温度を計算する。
-        一定比熱を仮定した線形T-Q関係を使用。
+        
+        二相流の場合：飽和温度で一定（相変化による潜熱交換）
+        単相流の場合：一定比熱を仮定した線形T-Q関係を使用
         
         Args:
             Q_exchanged (float): 交換される熱量 [W]
@@ -205,16 +208,24 @@ class HeatSourceProfile:
         if self.Q_available <= 0:
             return self.T_out_min
         
-        # Q_exchangedは高温端（T_in）から始まる
-        fraction_of_heat = Q_exchanged / self.Q_available
-        
-        if fraction_of_heat >= 1.0:
-            # 利用可能な熱量を超える場合は最低温度を返す
-            return self.T_out_min
-        
-        # T_inとT_out_minの間で線形補間
-        T_intermediate = self.T_in - fraction_of_heat * (self.T_in - self.T_out_min)
-        return T_intermediate
+        if self.is_two_phase:
+            # 二相流の場合、飽和温度で一定
+            # 実際には段階的に温度が下がるが、簡略化のため入口温度を返す
+            # より高精度な計算が必要な場合は、凝縮進行度を考慮
+            fraction_of_heat = Q_exchanged / self.Q_available
+            if fraction_of_heat >= 1.0:
+                return self.T_out_min
+            else:
+                return self.T_in  # 飽和温度で一定
+        else:
+            # 単相流の場合、従来通りの線形補間
+            fraction_of_heat = Q_exchanged / self.Q_available
+            
+            if fraction_of_heat >= 1.0:
+                return self.T_out_min
+            
+            T_intermediate = self.T_in - fraction_of_heat * (self.T_in - self.T_out_min)
+            return T_intermediate
 
 def get_heat_source_profile(
     T_htf_in: float,
@@ -226,7 +237,21 @@ def get_heat_source_profile(
 ) -> HeatSourceProfile:
     """
     熱源の種類と条件に基づき、その物理特性プロファイルを計算して返す。
-    将来的にはこの関数に "gas" や "steam" の分岐を追加していく。
+    
+    Args:
+        T_htf_in: 熱源入口温度 [K]
+        Vdot_htf: 体積流量 [m³/s] または質量流量 [kg/s] (mass_flow_mode=Trueの場合)
+        T_htf_out: 熱源出口温度 [K]
+        heat_source_type: 熱源タイプ ("liquid", "gas", "wet_steam", "steam")
+        fluid_htf: 流体名 (CoolProp名)
+        **kwargs: 追加パラメータ
+            - P_htf/P_gas/P_steam: 圧力 [Pa]
+            - quality: 品質（乾き度）[0-1] (wet_steamの場合)
+            - gas_composition: ガス組成辞書 (gasの場合)
+            - mass_flow_mode: 質量流量モードフラグ
+    
+    Returns:
+        HeatSourceProfile: 熱源の物理特性プロファイル
     """
     if heat_source_type == "liquid":
         # 現在のORC_Analysis.pyにある液体熱源の計算ロジックをここに集約
@@ -244,7 +269,7 @@ def get_heat_source_profile(
             T_in=T_htf_in,
             T_out_min=T_htf_out,
             Q_available=Q_available
-        )
+        )   
 
     elif heat_source_type == "gas":
         # ガス熱源の計算ロジック
@@ -349,8 +374,70 @@ def get_heat_source_profile(
         except Exception as e:
             raise ValueError(f"Gas property calculation failed: {e}")
         
+    elif heat_source_type == "wet_steam":
+        # 蒸気・液体二相混合の計算ロジック
+        P_steam = kwargs.get('P_steam', 101325)  # デフォルト圧力
+        quality = kwargs.get('quality', 0.5)     # 品質（乾き度）、デフォルト50%
+        mass_flow_mode = kwargs.get('mass_flow_mode', True)  # 二相では質量流量基準を推奨
+        
+        # 品質の妥当性チェック
+        if not (0.0 <= quality <= 1.0):
+            raise ValueError(f"Quality must be between 0.0 and 1.0, got {quality}")
+        
+        # 飽和状態での物性計算
+        try:
+            # 飽和液体と飽和蒸気の物性
+            rho_l = CP.PropsSI("D", "T", T_htf_in, "Q", 0, "Water")  # 飽和液体密度
+            rho_g = CP.PropsSI("D", "T", T_htf_in, "Q", 1, "Water")  # 飽和蒸気密度
+            h_l = CP.PropsSI("H", "T", T_htf_in, "Q", 0, "Water")    # 飽和液体エンタルピー
+            h_g = CP.PropsSI("H", "T", T_htf_in, "Q", 1, "Water")    # 飽和蒸気エンタルピー
+            
+            # 二相混合の物性計算
+            # 混合物エンタルピー
+            h_mix = quality * h_g + (1 - quality) * h_l
+            
+            # 混合物密度（比容積の加重平均）
+            v_l = 1.0 / rho_l  # 飽和液体比容積
+            v_g = 1.0 / rho_g  # 飽和蒸気比容積
+            v_mix = quality * v_g + (1 - quality) * v_l
+            rho_mix = 1.0 / v_mix
+            
+            # 質量流量計算
+            if mass_flow_mode:
+                m_dot_steam = Vdot_htf  # kg/s
+            else:
+                # 体積流量の場合、混合物密度を使用
+                m_dot_steam = Vdot_htf * rho_mix
+            
+            # 出口状態での物性計算（出口温度での飽和状態を仮定）
+            try:
+                h_out_l = CP.PropsSI("H", "T", T_htf_out, "Q", 0, "Water")
+                h_out_g = CP.PropsSI("H", "T", T_htf_out, "Q", 1, "Water")
+                h_out_mix = quality * h_out_g + (1 - quality) * h_out_l
+            except:
+                # 出口温度が飽和状態でない場合は液体として扱う
+                h_out_mix = CP.PropsSI("H", "T", T_htf_out, "P", P_steam, "Water")
+            
+            # 利用可能熱量
+            Q_available = m_dot_steam * (h_mix - h_out_mix)
+            
+            # 平均比熱（エンタルピー差から計算）
+            cp_avg = (h_mix - h_out_mix) / (T_htf_in - T_htf_out)
+            
+            return HeatSourceProfile(
+                m_dot=m_dot_steam,
+                cp=cp_avg,
+                T_in=T_htf_in,
+                T_out_min=T_htf_out,
+                Q_available=Q_available,
+                is_two_phase=True
+            )
+            
+        except Exception as e:
+            raise ValueError(f"Wet steam property calculation failed: {e}")
+    
     elif heat_source_type == "steam":
-        # 将来の拡張ポイント
+        # 将来の拡張ポイント（過熱蒸気等）
         raise NotImplementedError("Steam heat source calculation is not yet implemented.")
 
     else:
