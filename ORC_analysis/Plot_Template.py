@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-# import CoolProp.CoolProp as CP # Not directly used here, but by imported modules
+import CoolProp.CoolProp as CP  # T_sat(P) を得るために使用
 import os
 import sys
 
@@ -90,8 +90,8 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
             heat_source_type="wet_steam",
             P_steam=wet_steam_config["P_steam"],
             quality=wet_steam_config["quality"],
+            quality_out=wet_steam_config.get("quality_out", 0.0),
             mass_flow_mode=wet_steam_config["mass_flow_mode"],
-            T_htf_out=T_cond_K + wet_steam_config["T_steam_out_offset_K"]
         )
     else:  # liquid (デフォルト動作)
         perf_res = calculate_orc_performance_from_heat_source(
@@ -164,8 +164,8 @@ config = {
         
         # ガス熱源用の高温対応作動流体設定
         "gas_fluid_orc": "Toluene",  # ガス熱源用（高温対応）
-        "superheat_C": 8.0,  # ORC過熱度
-        "pinch_delta_K": 10.0, # ピンチデルタ
+        "superheat_C": 5.0,  # ORC過熱度
+        "pinch_delta_K": 5.0, # ピンチデルタ
         
         # 新規追加：熱源タイプ選択
         "heat_source_type": "wet_steam",  # "liquid", "gas", または "wet_steam"
@@ -217,10 +217,10 @@ config = {
     # 新規追加：湿り蒸気熱源専用パラメータ
     "wet_steam_params": {
         "P_steam": 19900,        # 湿り蒸気圧力 [Pa] (0.199 bar, 60°C飽和圧力相当)
-        "quality": 0.9,          # 品質（乾き度） [0-1]
+        "quality": 0.9,          # 入口乾き度 [0-1]
+        "quality_out": 0.0,      # 出口乾き度 [0-1]（二相区間での冷却量を決定）
         "mass_flow_mode": True,  # 質量流量モード（湿り蒸気では推奨）
         "use_mass_flow": True,   # True: mass_flow_values_kgs使用, False: Vdot_values_m3h使用
-        "T_steam_out_offset_K": 20,  # T_cond_K + このオフセット値
     },
     "run_params": {
         "base_filename": "ORC_analysis_IHI20_template_ver", # ベースファイル名変更
@@ -262,8 +262,8 @@ elif heat_source_type == "wet_steam":
     gas_cfg = None
     wet_steam_cfg = config["wet_steam_params"]
     
-    # 湿り蒸気用の出口温度を自動計算
-    T_steam_out_min = thermo_cfg["T_cond_K"] + wet_steam_cfg["T_steam_out_offset_K"]
+    # 湿り蒸気の二相区間では温度は飽和温度 T_sat(P) に留まる
+    T_sat_wet = CP.PropsSI("T", "P", wet_steam_cfg["P_steam"], "Q", 0, "Water")
     
     # 湿り蒸気では質量流量か体積流量かを選択
     if wet_steam_cfg.get("use_mass_flow", True):
@@ -276,9 +276,8 @@ elif heat_source_type == "wet_steam":
         flow_type = "体積流量"
     
     print(f"湿り蒸気熱源モードで実行します")
-    print(f"圧力: {wet_steam_cfg['P_steam']/100000:.3f} bar")
-    print(f"品質（乾き度）: {wet_steam_cfg['quality']}")
-    print(f"温度範囲: {sweep_cfg['T_htf_min_C']}°C - {sweep_cfg['T_htf_max_C']}°C")
+    print(f"圧力: {wet_steam_cfg['P_steam']/100000:.3f} bar, 飽和温度: {T_sat_wet - 273.15:.1f}°C")
+    print(f"入口乾き度: {wet_steam_cfg['quality']}, 出口乾き度: {wet_steam_cfg.get('quality_out', 0.0)}")
     print(f"流量範囲: {flow_values[0]} - {flow_values[-1]} {flow_unit} ({flow_type})")
     
 else:  # liquid (デフォルト)
@@ -292,12 +291,16 @@ else:  # liquid (デフォルト)
     print(f"温度範囲: {sweep_cfg['T_htf_min_C']}°C - {sweep_cfg['T_htf_max_C']}°C")
     print(f"流量範囲: {sweep_cfg['Vdot_values_m3h'][0]} - {sweep_cfg['Vdot_values_m3h'][-1]} m³/h")
 
-# 温度配列生成（共通）
-T_htf_values_K = np.linspace(
-    sweep_cfg["T_htf_min_C"] + 273.15, 
-    sweep_cfg["T_htf_max_C"] + 273.15, 
-    sweep_cfg["n_T_points"]
-)
+# 温度配列生成
+if heat_source_type == "wet_steam":
+    # 二相では温度は P に対する飽和温度。掃引は1点に固定。
+    T_htf_values_K = np.array([T_sat_wet])
+else:
+    T_htf_values_K = np.linspace(
+        sweep_cfg["T_htf_min_C"] + 273.15, 
+        sweep_cfg["T_htf_max_C"] + 273.15, 
+        sweep_cfg["n_T_points"]
+    )
 
 # --------------------------------------------------
 # 2. 計算

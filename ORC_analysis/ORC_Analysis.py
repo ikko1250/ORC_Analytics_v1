@@ -15,11 +15,25 @@ It includes:
 # ---------------------------------------------------------------------------
 # 1. Imports & global constants
 # ---------------------------------------------------------------------------
+import os
+import sys
 import numpy as np
 import pandas as pd
 import CoolProp.CoolProp as CP  # Thermophysical properties
-from .config import get_component_setting
-from .heat_source import get_heat_source_profile
+
+# Allow running this file directly (python ORC_analysis/ORC_Analysis.py)
+# by adding the project root to sys.path, then prefer absolute imports.
+if __name__ == "__main__" and __package__ is None:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    # When executed as part of the package (python -m ORC_analysis.ORC_Analysis)
+    from ORC_analysis.config import get_component_setting
+    from ORC_analysis.heat_source import get_heat_source_profile
+except ImportError:
+    # Fallback for relative import contexts
+    from .config import get_component_setting
+    from .heat_source import get_heat_source_profile
 
 DEFAULT_T0 = 298.15            # Dead‑state temperature [K] (25 °C)
 DEFAULT_FLUID = "R134a"       # Working fluid (HFC‑245fa)
@@ -340,7 +354,8 @@ def calculate_orc_performance_from_heat_source(
     # --- Wet steam specific ---
     P_steam: float = 101325,
     quality: float = 0.5,
-    T_htf_out: float = None,  # 湿り蒸気の場合の出口温度
+    quality_out: float = 0.0,  # 湿り蒸気：出口乾き度（温度でなく品質で指定）
+    T_htf_out: float = None,   # 互換維持（wet_steamでは内部で無視される）
     use_detailed_hex: bool = True  # ADDED: Toggle for detailed simulation
 ):
     """Compute ORC KPIs when driven by a heat source (liquid or gas)."""
@@ -397,11 +412,11 @@ def calculate_orc_performance_from_heat_source(
                     mass_flow_mode=mass_flow_mode, T_gas_out_min=T_gas_out_min
                 )
             elif heat_source_type == "wet_steam":
-                # 湿り蒸気の場合：T_htf_outが指定されていれば使用、なければ推定値を使用
-                T_out_use = T_htf_out if T_htf_out is not None else T_htf_out_guess
+                # 湿り蒸気：二相区間は T_sat(P) 一定。出口は乾き度で規定。
                 heat_source = get_heat_source_profile(
-                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_out_use,
-                    heat_source_type="wet_steam", P_steam=P_steam, quality=quality,
+                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_htf_out_guess,
+                    heat_source_type="wet_steam", P_steam=P_steam,
+                    quality=quality, quality_out=quality_out,
                     mass_flow_mode=mass_flow_mode
                 )
             else:
@@ -451,11 +466,11 @@ def calculate_orc_performance_from_heat_source(
                     mass_flow_mode=mass_flow_mode, T_gas_out_min=T_gas_out_min
                 )
             elif heat_source_type == "wet_steam":
-                # 湿り蒸気の場合：T_htf_outが指定されていれば使用、なければ計算値を使用
-                T_out_use = T_htf_out if T_htf_out is not None else T_htf_out
+                # 簡易ロジックでも wet_steam は品質指定で評価
                 heat_source = get_heat_source_profile(
-                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_out_use,
-                    heat_source_type="wet_steam", P_steam=P_steam, quality=quality,
+                    T_htf_in=T_htf_in, Vdot_htf=Vdot_htf, T_htf_out=T_htf_out,
+                    heat_source_type="wet_steam", P_steam=P_steam,
+                    quality=quality, quality_out=quality_out,
                     mass_flow_mode=mass_flow_mode
                 )
             else:
