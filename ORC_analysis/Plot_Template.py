@@ -194,13 +194,6 @@ config = {
             "T_htf_max_C": 300,
             "n_T_points": 30,
              "Vdot_values_m3h": np.arange(30000, 60000 + 10000, 10000),  # 30000から60000まで10000刻み
-        },
-        "wet_steam": {  # 新規湿り蒸気熱源用
-            "T_htf_min_C": 50,
-            "T_htf_max_C": 80,
-            "n_T_points": 50,
-            "mass_flow_values_kgs": np.arange(5, 25 + 5, 5),  # 5から25まで5刻み [kg/s]
-            "Vdot_values_m3h": np.arange(5, 25 + 5, 5),  # 5から25まで5刻み [m³/h] (オプション)
         }
     },
     # 新規追加：ガス熱源専用パラメータ
@@ -214,13 +207,22 @@ config = {
         "mass_flow_mode": False,
         "T_gas_out_offset_K": 20,  # T_cond_K + このオフセット値
     },
-    # 新規追加：湿り蒸気熱源専用パラメータ
-    "wet_steam_params": {
-        "P_steam": 19900,        # 湿り蒸気圧力 [Pa] (0.199 bar, 60°C飽和圧力相当)
-        "quality": 0.9,          # 入口乾き度 [0-1]
-        "quality_out": 0.0,      # 出口乾き度 [0-1]（二相区間での冷却量を決定）
-        "mass_flow_mode": True,  # 質量流量モード（湿り蒸気では推奨）
-        "use_mass_flow": True,   # True: mass_flow_values_kgs使用, False: Vdot_values_m3h使用
+    # 新スキーマ：湿り蒸気熱源（params / flow / sweep）
+    "wet_steam": {
+        "params": {
+            "P_steam": 19900,        # [Pa]
+            "quality_in": 0.9,       # 入口乾き度
+            "quality_out": 0.0,      # 出口乾き度（<= quality_in）
+        },
+        "flow": {
+            "mode": "mass",          # "mass" or "volumetric"
+            "values": np.arange(5, 25 + 5, 5),  # 既定: [kg/s]
+            "unit": "kg/s",
+        },
+        "sweep": {
+            "parameter": None,       # 例: "quality_out" or "pressure"
+            "values": None,
+        },
     },
     "run_params": {
         "base_filename": "ORC_analysis_IHI20_template_ver", # ベースファイル名変更
@@ -258,26 +260,32 @@ if heat_source_type == "gas":
     print(f"流量範囲: {sweep_cfg['Vdot_values_m3h'][0]} - {sweep_cfg['Vdot_values_m3h'][-1]} m³/h")
     
 elif heat_source_type == "wet_steam":
-    sweep_cfg = config["sweep_params"]["wet_steam"]
     gas_cfg = None
-    wet_steam_cfg = config["wet_steam_params"]
-    
-    # 湿り蒸気の二相区間では温度は飽和温度 T_sat(P) に留まる
-    T_sat_wet = CP.PropsSI("T", "P", wet_steam_cfg["P_steam"], "Q", 0, "Water")
-    
-    # 湿り蒸気では質量流量か体積流量かを選択
-    if wet_steam_cfg.get("use_mass_flow", True):
-        flow_values = sweep_cfg["mass_flow_values_kgs"]
-        flow_unit = "kg/s"
-        flow_type = "質量流量"
+    ws = config["wet_steam"]
+    params = ws["params"]
+    flow = ws["flow"]
+    sweep = ws.get("sweep", {"parameter": None, "values": None})
+
+    # バリデーション
+    if not (0.0 <= params["quality_out"] <= params["quality_in"] <= 1.0):
+        raise ValueError("Invalid quality settings: require 0 ≤ quality_out ≤ quality_in ≤ 1.")
+    if flow["mode"] not in ("mass", "volumetric"):
+        raise ValueError("flow.mode must be 'mass' or 'volumetric'.")
+
+    # 飽和温度（表示用）
+    T_sat_wet = CP.PropsSI("T", "P", params["P_steam"], "Q", 0, "Water")
+
+    # フロー配列と単位
+    flow_values = flow["values"]
+    if flow["mode"] == "mass":
+        flow_unit = "kg/s"; flow_type = "質量流量"; use_mass_flow = True
     else:
-        flow_values = sweep_cfg["Vdot_values_m3h"]
-        flow_unit = "m³/h"
-        flow_type = "体積流量"
-    
+        flow_unit = "m³/h"; flow_type = "体積流量"; use_mass_flow = False
+
+    # 表示
     print(f"湿り蒸気熱源モードで実行します")
-    print(f"圧力: {wet_steam_cfg['P_steam']/100000:.3f} bar, 飽和温度: {T_sat_wet - 273.15:.1f}°C")
-    print(f"入口乾き度: {wet_steam_cfg['quality']}, 出口乾き度: {wet_steam_cfg.get('quality_out', 0.0)}")
+    print(f"圧力: {params['P_steam']/100000:.3f} bar, 飽和温度: {T_sat_wet - 273.15:.1f}°C")
+    print(f"入口乾き度: {params['quality_in']}, 出口乾き度: {params['quality_out']}")
     print(f"流量範囲: {flow_values[0]} - {flow_values[-1]} {flow_unit} ({flow_type})")
     
 else:  # liquid (デフォルト)
@@ -297,8 +305,8 @@ if heat_source_type == "wet_steam":
     T_htf_values_K = np.array([T_sat_wet])
 else:
     T_htf_values_K = np.linspace(
-        sweep_cfg["T_htf_min_C"] + 273.15, 
-        sweep_cfg["T_htf_max_C"] + 273.15, 
+        sweep_cfg["T_htf_min_C"] + 273.15,
+        sweep_cfg["T_htf_max_C"] + 273.15,
         sweep_cfg["n_T_points"]
     )
 
@@ -309,29 +317,54 @@ results_list = []
 econ_list = []
 
 print("Heat-source sweep simulation running...")
-for flow_val in (flow_values if heat_source_type == "wet_steam" else sweep_cfg["Vdot_values_m3h"]):
-    if heat_source_type == "wet_steam" and wet_steam_cfg.get("use_mass_flow", True):
-        # 質量流量モードの場合、kg/sの値をそのまま使用
-        Vdot_m3s = flow_val  # kg/s として扱う
-    else:
-        # 体積流量モードまたは他の熱源タイプの場合
-        Vdot_m3s = flow_val / 3600.0  # m³/h から m³/s に変換
-    
-    for T_htf_K in T_htf_values_K:
-        perf_data, econ_data = run_single_orc_stage(
-            T_htf_K, Vdot_m3s, 
-            thermo_cfg["T_cond_K"], thermo_cfg["eta_pump"], thermo_cfg["eta_turb"],
-            thermo_cfg["fluid_orc"], thermo_cfg["fluid_htf"], 
-            thermo_cfg["superheat_C"], thermo_cfg["pinch_delta_K"],
-            econ_cfg, extra_duties_cfg,
-            # 新規追加：熱源タイプと設定
-            heat_source_type=heat_source_type,
-            gas_config=gas_cfg,
-            wet_steam_config=wet_steam_cfg,
-            thermo_params=thermo_cfg
-        )
-        results_list.append(perf_data)
-        econ_list.append(econ_data)
+
+if heat_source_type == "wet_steam":
+    # wet_steam 用：簡素化された設定を run_single_orc_stage に渡す
+    for flow_val in flow_values:
+        if use_mass_flow:
+            Vdot_m3s = flow_val  # kg/s をそのまま
+        else:
+            Vdot_m3s = flow_val / 3600.0  # m³/h → m³/s
+
+        # T は常に飽和温度（1点）
+        for T_htf_K in T_htf_values_K:
+            wet_cfg_simple = {
+                "P_steam": params["P_steam"],
+                "quality": params["quality_in"],
+                "quality_out": params["quality_out"],
+                "mass_flow_mode": use_mass_flow,
+            }
+            perf_data, econ_data = run_single_orc_stage(
+                T_htf_K, Vdot_m3s,
+                thermo_cfg["T_cond_K"], thermo_cfg["eta_pump"], thermo_cfg["eta_turb"],
+                thermo_cfg["fluid_orc"], thermo_cfg["fluid_htf"],
+                thermo_cfg["superheat_C"], thermo_cfg["pinch_delta_K"],
+                econ_cfg, extra_duties_cfg,
+                heat_source_type="wet_steam",
+                gas_config=None,
+                wet_steam_config=wet_cfg_simple,
+                thermo_params=thermo_cfg,
+            )
+            results_list.append(perf_data)
+            econ_list.append(econ_data)
+else:
+    # 既存: liquid / gas の処理
+    for flow_val in sweep_cfg["Vdot_values_m3h"]:
+        Vdot_m3s = flow_val / 3600.0
+        for T_htf_K in T_htf_values_K:
+            perf_data, econ_data = run_single_orc_stage(
+                T_htf_K, Vdot_m3s,
+                thermo_cfg["T_cond_K"], thermo_cfg["eta_pump"], thermo_cfg["eta_turb"],
+                thermo_cfg["fluid_orc"], thermo_cfg["fluid_htf"],
+                thermo_cfg["superheat_C"], thermo_cfg["pinch_delta_K"],
+                econ_cfg, extra_duties_cfg,
+                heat_source_type=heat_source_type,
+                gas_config=gas_cfg,
+                wet_steam_config=None,
+                thermo_params=thermo_cfg,
+            )
+            results_list.append(perf_data)
+            econ_list.append(econ_data)
 
 print("Simulation finished.")
 
