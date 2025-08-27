@@ -28,11 +28,9 @@ if __name__ == "__main__" and __package__ is None:
 
 try:
     # When executed as part of the package (python -m ORC_analysis.ORC_Analysis)
-    from ORC_analysis.config import get_component_setting
     from ORC_analysis.heat_source import get_heat_source_profile
 except ImportError:
     # Fallback for relative import contexts
-    from .config import get_component_setting
     from .heat_source import get_heat_source_profile
 
 DEFAULT_T0 = 298.15            # Dead‑state temperature [K] (25 °C)
@@ -492,7 +490,7 @@ def calculate_orc_performance_from_heat_source(
             if delta_h_evap <= 0: 
                 return None
             m_orc = Q_available / delta_h_evap
-            hex_data = {"use_detailed_hex": False, "T_htf_in": T_htf_in, "T_htf_out": T_htf_out}
+            hex_data = {"use_detailed_hex": use_detailed_hex, "T_htf_in": T_htf_in, "T_htf_out": T_htf_out}
         # --- End of modification ---
 
         # Calculate final performance with determined m_orc
@@ -535,17 +533,6 @@ def calculate_orc_performance_from_heat_source(
             output["Evap_dT_lm [K]"] = comp_results.loc["Evaporator", "ΔT_lm [K]"]
             output["Evap_E_heat_in [kW]"] = comp_results.loc["Evaporator", "E_heat [kW]"]
 
-        # トグル状態取得
-        use_preheater = get_component_setting('use_preheater', False)
-        use_superheater = get_component_setting('use_superheater', False)
-        preheater_params = get_component_setting('preheater_params', {}) if use_preheater else None
-        superheater_params = get_component_setting('superheater_params', {}) if use_superheater else None
-
-        # トグル状態とパラメータを出力に含める
-        output["use_preheater"] = use_preheater
-        output["use_superheater"] = use_superheater
-        output["preheater_params"] = preheater_params
-        output["superheater_params"] = superheater_params
         return output
     except Exception as e:
         print("ERROR in calculate_orc_performance_from_heat_source:", e)

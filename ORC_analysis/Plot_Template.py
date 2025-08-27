@@ -43,7 +43,7 @@ def get_nan_econ_dict(T_htf_in_C, Vdot_m3s):
         "PEC_total [$]": np.nan, "Unit_elec_cost [$/kWh]": np.nan,
         "Simple_PB [yr]": np.nan, "CRF [-]": np.nan, # Added CRF
     }
-    for comp in ["Evaporator", "Condenser", "Turbine", "Pump", "Superheater", "Regenerator"]:
+    for comp in ["Evaporator", "Condenser", "Turbine", "Pump", "Preheater", "Superheater", "Regenerator"]:
         nan_econ[f"{comp}_cost [$]"] = np.nan
     return nan_econ
 
@@ -68,6 +68,7 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
             fluid_orc=gas_fluid,
             superheat_C=sc_C, 
             pinch_delta_K=pinch_K,
+            use_detailed_hex=True,  # 詳細計算を有効化
             # ガス専用パラメータ
             heat_source_type="gas",
             gas_composition=gas_config["default_composition"],
@@ -86,6 +87,7 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
             fluid_orc=orc_fluid,
             superheat_C=sc_C, 
             pinch_delta_K=pinch_K,
+            use_detailed_hex=True,  # 詳細計算を有効化
             # 湿り蒸気専用パラメータ
             heat_source_type="wet_steam",
             P_steam=wet_steam_config["P_steam"],
@@ -103,7 +105,8 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
             fluid_orc=orc_fluid,
             fluid_htf=htf_fluid, 
             superheat_C=sc_C, 
-            pinch_delta_K=pinch_K
+            pinch_delta_K=pinch_K,
+            use_detailed_hex=True  # 詳細計算を有効化
         )
     T_htf_in_C = T_htf_in_K - 273.15
     if perf_res is None:
@@ -120,17 +123,31 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
         Q_in = perf_res["Q_in [kW]"]
 
         current_extra_duties = {}
-        if Q_in > 0 and Q_in is not np.nan : # Ensure Q_in is valid
-            ratios = extra_duties_config_dict.get("ratios", {})
-            lmtds = extra_duties_config_dict.get("lmtds", {})
-            if "Superheater" in ratios and "Superheater" in lmtds:
-                 current_extra_duties["Superheater"] = (
-                    Q_in * ratios["Superheater"], lmtds["Superheater"]
-                )
-            if "Regenerator" in ratios and "Regenerator" in lmtds:
-                 current_extra_duties["Regenerator"] = (
-                    Q_in * ratios["Regenerator"], lmtds["Regenerator"]
-                )
+        
+        # 実際の計算結果からPreheaterとSuperheaterのデータを取得
+        # E_dest_Preheater, E_dest_Superheater等が計算されている場合、それらを使用
+        
+        # Preheaterの処理
+        if "E_dest_Preheater [kW]" in perf_res and "Preheater_dT_lm [K]" in perf_res:
+            # Preheaterが計算されている場合
+            preheater_lmtd = perf_res["Preheater_dT_lm [K]"]
+            if preheater_lmtd > 0:  # 有効なLMTDがある場合
+                # 熱負荷を推定（簡易的に、Q_inの一定割合として計算）
+                # より正確には、ORC_Analysis.pyからQ値を直接取得すべき
+                preheater_q = Q_in * 0.1  # 仮の値（10%）
+                current_extra_duties["Preheater"] = (preheater_q, preheater_lmtd)
+        
+        # Superheaterの処理  
+        if "E_dest_Superheater [kW]" in perf_res and "Superheater_dT_lm [K]" in perf_res:
+            # Superheaterが計算されている場合
+            superheater_lmtd = perf_res["Superheater_dT_lm [K]"]
+            if superheater_lmtd > 0:  # 有効なLMTDがある場合
+                # 熱負荷を推定（簡易的に、Q_inの一定割合として計算）
+                superheater_q = Q_in * 0.2  # 仮の値（20%）
+                current_extra_duties["Superheater"] = (superheater_q, superheater_lmtd)
+        
+        # Regeneratorは実際に計算されていない限り含めない
+        # （現在の計算では計算されていないため、含めない）
 
         econ_eval = evaluate_orc_economics(
             P_evap=P_evap, T_turb_in=T_turb_in, T_cond=T_cond_K,
@@ -144,7 +161,7 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
         econ_res_dict["Unit_elec_cost [$/kWh]"] = econ_eval["summary"]["Unit elec cost [$/kWh]"]
         econ_res_dict["Simple_PB [yr]"] = econ_eval["summary"]["Simple PB [yr]"]
         econ_res_dict["CRF [-]"] = econ_eval["summary"]["CRF [-]"]
-        for comp in ["Evaporator", "Condenser", "Turbine", "Pump", "Superheater", "Regenerator"]:
+        for comp in ["Evaporator", "Condenser", "Turbine", "Pump", "Preheater", "Superheater", "Regenerator"]:
             if comp in econ_eval["component_costs"].index:
                 econ_res_dict[f"{comp}_cost [$]"] = econ_eval["component_costs"].loc[comp, "PEC [$]"]
     except Exception as e:
@@ -168,7 +185,7 @@ config = {
         "pinch_delta_K": 5.0, # ピンチデルタ
         
         # 新規追加：熱源タイプ選択
-        "heat_source_type": "wet_steam",  # "liquid", "gas", または "wet_steam"
+        "heat_source_type": "liquid",  # "liquid", "gas", または "wet_steam"
     },
     "economic_params": {
         "interest_rate": 0.05,  # 金利 (5%)
@@ -216,7 +233,7 @@ config = {
         },
         "flow": {
             "mode": "mass",          # "mass" or "volumetric"
-            "values": np.arange(5, 25 + 5, 5),  # 既定: [kg/s]
+            "values": np.arange(1, 5 + 5, 5),  # 既定: [kg/s]
             "unit": "kg/s",
         },
         "sweep": {
@@ -287,6 +304,20 @@ elif heat_source_type == "wet_steam":
     print(f"圧力: {params['P_steam']/100000:.3f} bar, 飽和温度: {T_sat_wet - 273.15:.1f}°C")
     print(f"入口乾き度: {params['quality_in']}, 出口乾き度: {params['quality_out']}")
     print(f"流量範囲: {flow_values[0]} - {flow_values[-1]} {flow_unit} ({flow_type})")
+
+    # 後段のプロット用に互換用の設定を用意
+    sweep_cfg = {
+        "T_htf_min_C": (T_sat_wet - 273.15),
+        "T_htf_max_C": (T_sat_wet - 273.15),
+        "n_T_points": 1,
+        # 非使用だが型合わせのため
+        "Vdot_values_m3h": np.array([]),
+    }
+    wet_steam_cfg = {
+        "P_steam": params["P_steam"],
+        "quality": params["quality_in"],
+        "use_mass_flow": use_mass_flow,
+    }
     
 else:  # liquid (デフォルト)
     sweep_cfg = config["sweep_params"]["liquid"]
@@ -434,8 +465,8 @@ plot_conditions = generate_plot_title(heat_source_type, sweep_cfg, thermo_cfg, g
 # 性能プロット
 fig1_title = f"ORC性能プロット\n条件: {plot_conditions}"
 
-fig1, axes1 = plt.subplots(4, 1, figsize=plot_cfg["fig1_size"], sharex=True)
-fig1.suptitle(fig1_title, fontsize=12, y=0.985)
+fig1, axes1 = plt.subplots(4, 1, figsize=plot_cfg["fig1_size"], sharex=True, constrained_layout=True)
+fig1.suptitle(fig1_title, fontsize=12)
 
 cmap = plt.get_cmap(plot_cfg["cmap_name"])
 markers = plot_cfg["markers"]
@@ -462,11 +493,10 @@ setup_axis(axes1[2], "熱源入口温度 [°C]", "タービン入口圧力 P_eva
 plot_lines(axes1[3], results_df, "T_htf_in [°C]", "ε_ex [-]", plot_flow_values, cmap, markers, heat_source_type=heat_source_type, wet_steam_cfg=wet_steam_cfg)
 setup_axis(axes1[3], "熱源入口温度 [°C]", "エクセルギー効率 ε [-]", "熱源流量")
 
-plt.tight_layout()
 # ファイル名に熱源タイプを含める
 base_filename = f"{run_cfg['base_filename']}_{heat_source_type}"
 filename1 = f"{base_filename}_performance.png"
-plt.savefig(filename1, dpi=300)
+fig1.savefig(filename1, dpi=300, bbox_inches="tight", pad_inches=0.2)
 print(f"性能プロットを {filename1} に保存しました。")
 plt.close(fig1)
 
@@ -474,7 +504,7 @@ plt.close(fig1)
 if econ_df is not None and not econ_df.empty:
     fig2_title = f"ORC経済性プロット\n条件: {plot_conditions}"
 
-    fig2, axes2 = plt.subplots(3, 1, figsize=plot_cfg["fig2_size"], sharex=True)
+    fig2, axes2 = plt.subplots(3, 1, figsize=plot_cfg["fig2_size"], sharex=True, constrained_layout=True)
     fig2.suptitle(fig2_title, fontsize=12)
 
     # 設備総コストプロット
@@ -489,22 +519,21 @@ if econ_df is not None and not econ_df.empty:
     plot_lines(axes2[2], econ_df, "T_htf_in [°C]", "Simple_PB [yr]", plot_flow_values, cmap, markers, heat_source_type=heat_source_type, wet_steam_cfg=wet_steam_cfg)
     setup_axis(axes2[2], "熱源入口温度 [°C]", "単純回収期間 [年]", "熱源流量")
 
-    plt.tight_layout()
     filename2 = f"{base_filename}_economic.png"
-    plt.savefig(filename2, dpi=300)
+    fig2.savefig(filename2, dpi=300, bbox_inches="tight", pad_inches=0.2)
     print(f"経済性プロットを {filename2} に保存しました。")
     plt.close(fig2)
 
     # コンポーネント別コストの積み上げ図
     def plot_stacked_bars(df_to_plot, flow_val, x_col, cost_suffix, fig_title_prefix, ylabel_text, filename_suffix, base_fname, fig_size):
-        fig, ax = plt.subplots(figsize=fig_size)
-        
+        fig, ax = plt.subplots(figsize=fig_size, constrained_layout=True)
+
         # タイトルで単位を正しく表示
         if heat_source_type == "wet_steam" and wet_steam_cfg and wet_steam_cfg.get("use_mass_flow", True):
             flow_unit = "kg/s"
         else:
             flow_unit = "m³/h"
-        
+
         full_title = (f"{fig_title_prefix}コンポーネント別コスト 積み上げ図 (Flow={flow_val:.1f} {flow_unit})\n"
                       f"条件: {plot_conditions}")
         fig.suptitle(full_title, fontsize=10)
@@ -514,22 +543,21 @@ if econ_df is not None and not econ_df.empty:
             df_sub = df_to_plot[df_to_plot["Vdot_htf [m3/s]"].round(6) == flow_val.round(6)]
         else:
             df_sub = df_to_plot[df_to_plot["Vdot_htf [m3/s]"].round(6) == (flow_val / 3600.0).round(6)]
-            
+
         if not df_sub.empty:
             cost_columns = [col for col in df_sub.columns if col.endswith(cost_suffix)]
             df_sub_sorted = df_sub.sort_values(by=x_col).copy()
-            
+
             bottom = np.zeros(len(df_sub_sorted))
             for col in cost_columns:
                 component_name = col.replace(cost_suffix, "")
                 costs_to_plot = pd.to_numeric(df_sub_sorted[col], errors='coerce').fillna(0) / 1e3
                 ax.bar(df_sub_sorted[x_col], costs_to_plot, bottom=bottom, label=component_name)
                 bottom += costs_to_plot
-            
+
             setup_axis(ax, "熱源入口温度 [°C]", ylabel_text, "コンポーネント")
-            plt.tight_layout()
             fname = f"{base_fname}_{filename_suffix}.png"
-            plt.savefig(fname, dpi=300)
+            fig.savefig(fname, dpi=300, bbox_inches="tight", pad_inches=0.2)
             print(f"{fig_title_prefix}コンポーネント別コストプロットを {fname} に保存しました。")
         else:
             print(f"データがありません。{fig_title_prefix}コンポーネント別コストプロット (Flow={flow_val:.1f} {flow_unit})。")

@@ -52,7 +52,6 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from .config import get_component_setting
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -255,25 +254,11 @@ def check_orc_toggle_consistency():
         dummy_result = calculate_orc_performance_from_heat_source(
             T_htf_in=400.0, Vdot_htf=1.0, T_cond=300.0, eta_pump=0.7, eta_turb=0.8
         )
-        if dummy_result is not None:
-            analysis_flags['use_preheater'] = dummy_result.get('use_preheater', None)
-            analysis_flags['use_superheater'] = dummy_result.get('use_superheater', None)
-            analysis_flags['use_regenerator'] = dummy_result.get('use_regenerator', None)
+        # Note: 以前はconfigとの整合性チェックを行っていましたが、
+        # config設定は廃止され、実際の計算結果に基づく判定に変更されました
     except (ImportError, AttributeError, ValueError, RuntimeError) as e:
         logger.debug(f"Could not perform consistency check: {e}")
         return
-    config_preheater = get_component_setting('use_preheater', False)
-    config_superheater = get_component_setting('use_superheater', False)
-    config_regenerator = get_component_setting('use_regenerator', False)
-    if (analysis_flags.get('use_preheater') is not None and
-        analysis_flags['use_preheater'] != config_preheater):
-        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_preheaterの設定が一致していません！")
-    if (analysis_flags.get('use_superheater') is not None and
-        analysis_flags['use_superheater'] != config_superheater):
-        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_superheaterの設定が一致していません！")
-    if (analysis_flags.get('use_regenerator') is not None and
-        analysis_flags['use_regenerator'] != config_regenerator):
-        logger.warning("ORC_Analysis.pyとEconomic.pyでuse_regeneratorの設定が一致していません！")
 
 # 一度だけ整合性チェックを行うためのフラグ
 # _consistency_checked = False # このグローバル変数は現在使用されていません
@@ -281,9 +266,8 @@ def check_orc_toggle_consistency():
 def _check_consistency_once():
     # global _consistency_checked # この行は不要です。関数属性を使用しています。
     if not getattr(_check_consistency_once, '_consistency_checked', False):
-        # このチェックは、ORC_Analysis.py が config.py の設定を正しく参照していることを
-        # 確認することを目的としています。通常、両者は同じ config.py を参照するため一致しますが、
-        # 開発中の変更等で意図せず不整合が生じる可能性を警告するために実行されます。
+        # Note: 以前はconfig設定との整合性チェックを行っていましたが、
+        # 現在は実際の計算結果に基づいてコンポーネントの使用を判定します
         check_orc_toggle_consistency()
         _check_consistency_once._consistency_checked = True
 
@@ -386,18 +370,13 @@ def evaluate_orc_economics(
     # Calculate PEC for Heat Exchangers
     # `duties` contains "Evaporator", "Condenser", and any valid `extra_duties`
     for comp_name, (Q_kW, lmtd_K) in duties.items():
-        # Preheater/Superheater/Regeneratorのトグル判定
-        if comp_name == "Preheater" and not get_component_setting('use_preheater', False):
+        # 実際の計算結果に基づく判定: 熱負荷が非常に小さい場合はコンポーネントが使用されていないと判定
+        Q_threshold = 1.0  # 1kW未満の場合は使用していないと判定
+        
+        if abs(Q_kW) < Q_threshold:
+            # 熱負荷が小さい場合はコストを0とする
             pec = 0.0
-            area = 0.0 # Still calculate area for reporting if needed, or set to 0
-            U_val = U_VALUES.get(comp_name, 0.0)
-        elif comp_name == "Superheater" and not get_component_setting('use_superheater', False):
-            pec = 0.0
-            area = 0.0 # Still calculate area for reporting if needed, or set to 0
-            U_val = U_VALUES.get(comp_name, 0.0)
-        elif comp_name == "Regenerator" and not get_component_setting('use_regenerator', False):
-            pec = 0.0
-            area = 0.0 # Still calculate area for reporting if needed, or set to 0
+            area = 0.0
             U_val = U_VALUES.get(comp_name, 0.0)
         elif comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
             U_val = U_VALUES[comp_name]
