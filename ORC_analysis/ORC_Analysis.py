@@ -493,6 +493,26 @@ def calculate_orc_performance_from_heat_source(
             hex_data = {"use_detailed_hex": use_detailed_hex, "T_htf_in": T_htf_in, "T_htf_out": T_htf_out}
         # --- End of modification ---
 
+        # 基本的な熱力学整合性チェック
+        T_sat_evap_check = _get_coolprop_property("T", fluid_orc, P_Pa=P_evap, Q_frac=0)
+        assert T_turb_in >= T_sat_evap_check - 1e-6, "Turbine inlet below saturation temperature."
+
+        assert h3 > h2b, "Superheat enthalpy increment non‑positive."
+        assert h2b > h2a, "Latent (evaporation) enthalpy increment non‑positive."
+        assert h2a > h2, "Preheater enthalpy increment non‑positive."
+        assert h2 >= h1, "Pump enthalpy rise negative (check η_pump)."
+
+        total_delta_h_orc = h3 - h2
+        assert total_delta_h_orc > 0, "Total ORC heating enthalpy increment non‑positive."
+
+        # 近臨界警告（任意）
+        try:
+            Pcrit = CP.PropsSI("pcrit", fluid_orc)
+            if P_evap > 0.9 * Pcrit:
+                print(f"Warning: Evaporation pressure {P_evap/1e5:.2f} bar near critical; phase region splits may lose meaning.")
+        except Exception:
+            pass
+
         # Calculate final performance with determined m_orc
         psi_df, comp_results, cycle_kpi = calculate_orc_performance(
             P_evap=P_evap,
