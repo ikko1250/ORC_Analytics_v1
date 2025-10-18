@@ -21,6 +21,131 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from math import log
 
+# --- Minimal, reusable NTU utilities (kept simple and self-contained) ---
+
+def effectiveness_counterflow(NTU: float, C_r: float) -> float:
+    """Effectiveness ε for a counterflow heat exchanger.
+
+    Parameters
+    - NTU: Number of Transfer Units (>= 0)
+    - C_r: Capacity ratio C_min / C_max in [0, 1]
+
+    Returns
+    - ε in (0,1)
+    """
+    if NTU < 0:
+        return 0.0
+    # Special case: phase-change on one side -> C_r = 0 => ε = 1 - exp(-NTU)
+    if C_r <= 1e-12:
+        return 1.0 - np.exp(-NTU)
+    # General counterflow expression
+    num = 1.0 - np.exp(-NTU * (1.0 - C_r))
+    den = 1.0 - C_r * np.exp(-NTU * (1.0 - C_r))
+    if den == 0:
+        return 0.0
+    return num / den
+
+
+def ntu_from_effectiveness_counterflow(epsilon: float, C_r: float, *, tol: float = 1e-8, max_iter: int = 200) -> float:
+    """Invert ε(NTU, C_r) for counterflow to obtain NTU from ε and C_r.
+
+    - Closed form for C_r=0: NTU = -ln(1-ε)
+    - Otherwise: monotone bisection on NTU in [0, NTU_max]
+    """
+    eps = max(1e-12, min(1.0 - 1e-12, epsilon))
+    if C_r <= 1e-12:
+        return -np.log(1.0 - eps)
+
+    # Bisection on NTU; set a generous upper bound
+    lo, hi = 0.0, 100.0
+    for _ in range(max_iter):
+        mid = 0.5 * (lo + hi)
+        f_mid = effectiveness_counterflow(mid, C_r)
+        if abs(f_mid - eps) < tol:
+            return mid
+        if f_mid < eps:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def sizing_via_ntu(Q_W: float,
+                   T_hot_in: float, T_hot_out: float,
+                   T_cold_in: float, T_cold_out: float,
+                   U_W_m2K: float | None = None,
+                   *,
+                   arrangement: str = "counterflow") -> dict:
+    """Compute UA, NTU, ε, and A (if U is provided) from segment data using ε–NTU.
+
+    This routine intentionally uses only local segment data (Q and end temperatures)
+    to avoid strong coupling; it handles the phase‑change case via C_r=0.
+
+    Returns a dict with keys: 'UA_W_per_K', 'NTU', 'epsilon', 'C_min_W_per_K',
+    'C_r', and if U provided, 'A_m2'.
+    """
+    if arrangement != "counterflow":
+        # For minimal changes we only support counterflow here.
+        raise NotImplementedError("Only counterflow arrangement is supported in minimal NTU utility.")
+
+    # Use absolute Q for sizing, sign does not matter for UA
+    Q = abs(Q_W)
+
+    # Detect phase‑change on the cold side (isothermal): ΔT_cold ≈ 0
+    dT_hot = float(T_hot_in - T_hot_out)
+    dT_cold = float(T_cold_out - T_cold_in)
+
+    # Guard against degenerate data: both sides isothermal (e.g., condensing → boiling)
+    if abs(dT_hot) < 1e-12 and abs(dT_cold) < 1e-12:
+        # For isothermal–isothermal exchange, UA follows from Q = UA * ΔT (constant approach)
+        delta_T = float(T_hot_in - T_cold_in)
+        UA = Q / max(1e-12, abs(delta_T))
+        out = {
+            "UA_W_per_K": UA,
+            "NTU": np.nan,
+            "epsilon": np.nan,
+            "C_min_W_per_K": np.nan,
+            "C_r": np.nan,
+        }
+        if U_W_m2K:
+            out["A_m2"] = UA / U_W_m2K
+        return out
+
+    # Segment capacity rates from energy balance (piecewise constant assumption)
+    # C_hot_seg = Q / |ΔT_hot|; C_cold_seg = Q / |ΔT_cold| (if ΔT_cold>0)
+    C_hot = Q / max(1e-12, abs(dT_hot))
+    if abs(dT_cold) < 1e-12:
+        # Phase‑change on cold side (e.g., evaporator): C_r = 0, C_min = C_hot
+        C_min = C_hot
+        C_r = 0.0
+        # ΔT_max = T_hot_in − T_cold_in (approach at hot inlet)
+        dT_max = float((T_hot_in - T_cold_in))
+        # Observed effectiveness from temperatures
+        eps_obs = max(1e-12, min(1.0 - 1e-12, abs(dT_hot) / max(1e-12, abs(dT_max))))
+        NTU = -np.log(1.0 - eps_obs)
+        UA = NTU * C_min
+    else:
+        C_cold = Q / abs(dT_cold)
+        C_min = min(C_hot, C_cold)
+        C_max = max(C_hot, C_cold)
+        C_r = C_min / C_max if C_max > 0 else 0.0
+        dT_max = float((T_hot_in - T_cold_in))
+        eps_obs = Q / max(1e-12, (C_min * abs(dT_max)))
+        eps_obs = max(1e-12, min(1.0 - 1e-12, eps_obs))
+        NTU = ntu_from_effectiveness_counterflow(eps_obs, C_r)
+        UA = NTU * C_min
+
+    out = {
+        "UA_W_per_K": UA,
+        "NTU": NTU,
+        "epsilon": float(eps_obs),
+        "C_min_W_per_K": C_min,
+        "C_r": float(C_r),
+    }
+    if U_W_m2K:
+        out["A_m2"] = UA / U_W_m2K
+    return out
+
 # Given/assumed constants
 p_sat = 19900.0  # Pa (not used directly in this simplified calc)
 T_sat = 60.06    # °C (approx saturation temperature for ~19.9 kPa)
@@ -82,9 +207,14 @@ headline = {
     "UA (from ε–NTU) [MW/K]": UA_ntu/1e6
 }
 
-# Display table to user
-import caas_jupyter_tools
-caas_jupyter_tools.display_dataframe_to_user("Required area vs U (LMTD vs ε–NTU cross-check)", df.round(3))
+# Display table to user (optional in non-notebook environments)
+try:
+    import caas_jupyter_tools  # only available in certain notebook runtimes
+    caas_jupyter_tools.display_dataframe_to_user(
+        "Required area vs U (LMTD vs ε–NTU cross-check)", df.round(3)
+    )
+except Exception:
+    pass
 
 # Plot Area vs U
 plt.figure()

@@ -19,6 +19,7 @@ import os
 import sys
 import numpy as np
 import pandas as pd
+CoolProp_installed = True
 import CoolProp.CoolProp as CP  # Thermophysical properties
 
 # Allow running this file directly (python ORC_analysis/ORC_Analysis.py)
@@ -29,9 +30,11 @@ if __name__ == "__main__" and __package__ is None:
 try:
     # When executed as part of the package (python -m ORC_analysis.ORC_Analysis)
     from ORC_analysis.heat_source import get_heat_source_profile
+    from ORC_analysis import NTU as ntu
 except ImportError:
     # Fallback for relative import contexts
     from .heat_source import get_heat_source_profile
+    from . import NTU as ntu
 
 DEFAULT_T0 = 298.15            # Dead‑state temperature [K] (25 °C)
 DEFAULT_FLUID = "R134a"       # Working fluid (HFC‑245fa)
@@ -220,26 +223,37 @@ def calculate_orc_performance(
         T_htf_out_pre = heat_exchanger_data["T_htf_out"]
         dT_lm_pre = lmtd_counter_current(T_htf_in_pre, T_htf_out_pre, states["2"]["T"], states["2a"]["T"])
         T_hot_avg_pre = 0.5 * (T_htf_in_pre + T_htf_out_pre)
+        # NTU-based sizing (optional U)
+        U_pre = heat_exchanger_data.get("U_preheater_W_m2K") if isinstance(heat_exchanger_data, dict) else None
+        sizing_pre = ntu.sizing_via_ntu(Q_pre * 1e3, T_htf_in_pre, T_htf_out_pre, states["2"]["T"], states["2a"]["T"], U_W_m2K=U_pre)
         E_heat_pre = exergy_of_heat(Q_pre, T_hot_avg_pre, T0)
         results["Preheater"] = {
             "Q [kW]": Q_pre, "E_heat [kW]": E_heat_pre,
             "E_dest [kW]": E_heat_pre - m_orc * (psi["2a"] - psi["2"]),
             "ε [-]": m_orc * (psi["2a"] - psi["2"]) / E_heat_pre if E_heat_pre else np.nan,
             "ΔT_lm [K]": dT_lm_pre,
+            "UA_NTU [kW/K]": sizing_pre["UA_W_per_K"] / 1e3,
+            "NTU [-]": sizing_pre["NTU"],
+            "A_NTU [m²]": sizing_pre.get("A_m2", np.nan),
         }
         
         # Evaporator (2a → 2b)
         Q_evap = m_orc * (states["2b"]["h"] - states["2a"]["h"])
         T_htf_in_evap = heat_exchanger_data["T_htf_mid1"]
         T_htf_out_evap = heat_exchanger_data["T_htf_mid2"]
-        dT_lm_evap = lmtd_counter_current(T_htf_in_evap, T_htf_out_evap, states["2a"]["T"], states["2b"]["T"])
+        dT_lm_evap = lmtd_counter_current(T_htf_in_evap, T_htf_out_evap, states["2a"]["T"], states["2b"]["T"]) 
         T_hot_avg_evap = 0.5 * (T_htf_in_evap + T_htf_out_evap)
+        U_evap = heat_exchanger_data.get("U_evaporator_W_m2K") if isinstance(heat_exchanger_data, dict) else None
+        sizing_evap = ntu.sizing_via_ntu(Q_evap * 1e3, T_htf_in_evap, T_htf_out_evap, states["2a"]["T"], states["2b"]["T"], U_W_m2K=U_evap)
         E_heat_evap = exergy_of_heat(Q_evap, T_hot_avg_evap, T0)
         results["Evaporator"] = {
             "Q [kW]": Q_evap, "E_heat [kW]": E_heat_evap,
             "E_dest [kW]": E_heat_evap - m_orc * (psi["2b"] - psi["2a"]),
             "ε [-]": m_orc * (psi["2b"] - psi["2a"]) / E_heat_evap if E_heat_evap else np.nan,
             "ΔT_lm [K]": dT_lm_evap,
+            "UA_NTU [kW/K]": sizing_evap["UA_W_per_K"] / 1e3,
+            "NTU [-]": sizing_evap["NTU"],
+            "A_NTU [m²]": sizing_evap.get("A_m2", np.nan),
         }
         
         # Superheater (2b → 3)
@@ -248,12 +262,17 @@ def calculate_orc_performance(
         T_htf_out_super = heat_exchanger_data["T_htf_mid1"]
         dT_lm_super = lmtd_counter_current(T_htf_in_super, T_htf_out_super, states["2b"]["T"], states["3"]["T"])
         T_hot_avg_super = 0.5 * (T_htf_in_super + T_htf_out_super)
+        U_super = heat_exchanger_data.get("U_superheater_W_m2K") if isinstance(heat_exchanger_data, dict) else None
+        sizing_super = ntu.sizing_via_ntu(Q_super * 1e3, T_htf_in_super, T_htf_out_super, states["2b"]["T"], states["3"]["T"], U_W_m2K=U_super)
         E_heat_super = exergy_of_heat(Q_super, T_hot_avg_super, T0)
         results["Superheater"] = {
             "Q [kW]": Q_super, "E_heat [kW]": E_heat_super,
             "E_dest [kW]": E_heat_super - m_orc * (psi["3"] - psi["2b"]),
             "ε [-]": m_orc * (psi["3"] - psi["2b"]) / E_heat_super if E_heat_super else np.nan,
             "ΔT_lm [K]": dT_lm_super,
+            "UA_NTU [kW/K]": sizing_super["UA_W_per_K"] / 1e3,
+            "NTU [-]": sizing_super["NTU"],
+            "A_NTU [m²]": sizing_super.get("A_m2", np.nan),
         }
         Q_e = Q_pre + Q_evap + Q_super
         E_heat_e = E_heat_pre + E_heat_evap + E_heat_super
@@ -266,9 +285,13 @@ def calculate_orc_performance(
         if T_htf_in is not None and T_htf_out is not None:
             dT_lm = lmtd_counter_current(T_htf_in, T_htf_out, T2, T3)
             T_hot_avg = 0.5 * (T_htf_in + T_htf_out)
+            # NTU-based sizing for combined heater segment (optional U)
+            U_evap = heat_exchanger_data.get("U_evaporator_W_m2K") if isinstance(heat_exchanger_data, dict) else None
+            sizing_combined = ntu.sizing_via_ntu(Q_e * 1e3, T_htf_in, T_htf_out, T2, T3, U_W_m2K=U_evap)
         else:
             dT_lm = T3 - T2              # fallback dummy
             T_hot_avg = 0.5 * (T2 + T3)  # fallback if HTF temps not provided
+            sizing_combined = {"UA_W_per_K": np.nan, "NTU": np.nan, "A_m2": np.nan}
 
         E_heat_e = exergy_of_heat(Q_e, T_hot_avg, T0)
         results["Evaporator"] = {
@@ -278,6 +301,9 @@ def calculate_orc_performance(
             "ε [-]": m_orc * (psi["3"] - psi["2"]) / E_heat_e if E_heat_e else np.nan,
             "ΔT_lm [K]": dT_lm,
             "T_hot_avg [K]": T_hot_avg,
+            "UA_NTU [kW/K]": sizing_combined["UA_W_per_K"] / 1e3 if sizing_combined["UA_W_per_K"] == sizing_combined["UA_W_per_K"] else np.nan,
+            "NTU [-]": sizing_combined.get("NTU", np.nan),
+            "A_NTU [m²]": sizing_combined.get("A_m2", np.nan),
         }
 
     # (c) Turbine -----------------------------------------------------------
@@ -354,12 +380,30 @@ def calculate_orc_performance_from_heat_source(
     quality: float = 0.5,
     quality_out: float = 0.0,  # 湿り蒸気：出口乾き度（温度でなく品質で指定）
     T_htf_out: float = None,   # 互換維持（wet_steamでは内部で無視される）
-    use_detailed_hex: bool = True  # ADDED: Toggle for detailed simulation
+    use_detailed_hex: bool = True,  # ADDED: Toggle for detailed simulation
+    # Optional: U values for NTU sizing [W/m²K]
+    U_preheater_W_m2K: float = None,
+    U_evaporator_W_m2K: float = None,
+    U_superheater_W_m2K: float = None,
 ):
     """Compute ORC KPIs when driven by a heat source (liquid or gas)."""
     try:
         superheat_K = superheat_C
-        T_sat_evap = T_htf_in - pinch_delta_K - superheat_K
+
+        # Determine evaporator saturation temperature on ORC side
+        # For wet steam: hot source is at T_sat(P_steam), so base off that.
+        if heat_source_type == "wet_steam":
+            try:
+                T_hot_source_in = CP.PropsSI("T", "P", P_steam, "Q", 0, "Water")
+            except Exception as e:
+                raise ValueError(f"Could not compute saturation temperature for wet steam: {e}")
+            T_sat_evap = T_hot_source_in - pinch_delta_K - superheat_K
+            # In wet steam path, if caller did not supply T_htf_in, use the saturation temperature
+            if T_htf_in is None:
+                T_htf_in = T_hot_source_in
+        else:
+            # Liquid or gas hot source: T_htf_in provided is the hot inlet temperature
+            T_sat_evap = T_htf_in - pinch_delta_K - superheat_K
 
         # --- 臨界温度・凝縮温度チェック ---
         if not hasattr(calculate_orc_performance_from_heat_source, '_tcrit_cache'):
@@ -453,6 +497,10 @@ def calculate_orc_performance_from_heat_source(
                 "use_detailed_hex": True,
                 "T_htf_in": T_htf_in, "T_htf_mid1": T_htf_mid1,
                 "T_htf_mid2": T_htf_mid2, "T_htf_out": T_htf_out,
+                # pass optional U values for NTU-based area sizing
+                "U_preheater_W_m2K": U_preheater_W_m2K,
+                "U_evaporator_W_m2K": U_evaporator_W_m2K,
+                "U_superheater_W_m2K": U_superheater_W_m2K,
             }
         else:
             # --- Original simplified logic ---
@@ -490,7 +538,12 @@ def calculate_orc_performance_from_heat_source(
             if delta_h_evap <= 0: 
                 return None
             m_orc = Q_available / delta_h_evap
-            hex_data = {"use_detailed_hex": use_detailed_hex, "T_htf_in": T_htf_in, "T_htf_out": T_htf_out}
+            hex_data = {
+                "use_detailed_hex": use_detailed_hex,
+                "T_htf_in": T_htf_in,
+                "T_htf_out": T_htf_out,
+                "U_evaporator_W_m2K": U_evaporator_W_m2K,
+            }
         # --- End of modification ---
 
         # 基本的な熱力学整合性チェック
@@ -540,8 +593,21 @@ def calculate_orc_performance_from_heat_source(
             output["E_dest_Preheater [kW]"] = comp_results.loc["Preheater", "E_dest [kW]"]
             output["E_dest_Evaporator [kW]"] = comp_results.loc["Evaporator", "E_dest [kW]"]
             output["E_dest_Superheater [kW]"] = comp_results.loc["Superheater", "E_dest [kW]"]
+            # Expose NTU-based sizing if available
+            if "A_NTU [m²]" in comp_results.columns:
+                output["Preheater_A_NTU [m²]"] = comp_results.loc["Preheater", "A_NTU [m²]"]
+                output["Evaporator_A_NTU [m²]"] = comp_results.loc["Evaporator", "A_NTU [m²]"]
+                output["Superheater_A_NTU [m²]"] = comp_results.loc["Superheater", "A_NTU [m²]"]
+            if "UA_NTU [kW/K]" in comp_results.columns:
+                output["Preheater_UA_NTU [kW/K]"] = comp_results.loc["Preheater", "UA_NTU [kW/K]"]
+                output["Evaporator_UA_NTU [kW/K]"] = comp_results.loc["Evaporator", "UA_NTU [kW/K]"]
+                output["Superheater_UA_NTU [kW/K]"] = comp_results.loc["Superheater", "UA_NTU [kW/K]"]
         else:
             output["E_dest_Evaporator [kW]"] = comp_results.loc["Evaporator", "E_dest [kW]"]
+            if "A_NTU [m²]" in comp_results.columns:
+                output["Evaporator_A_NTU [m²]"] = comp_results.loc["Evaporator", "A_NTU [m²]"]
+            if "UA_NTU [kW/K]" in comp_results.columns:
+                output["Evaporator_UA_NTU [kW/K]"] = comp_results.loc["Evaporator", "UA_NTU [kW/K]"]
         output["E_dest_Turbine [kW]"] = comp_results.loc["Turbine", "E_dest [kW]"]
         output["E_dest_Condenser [kW]"] = comp_results.loc["Condenser", "E_dest [kW]"]
         output["E_dest_Total [kW]"] = comp_results["E_dest [kW]"].sum()

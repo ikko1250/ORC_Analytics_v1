@@ -380,8 +380,33 @@ def evaluate_orc_economics(
             U_val = U_VALUES.get(comp_name, 0.0)
         elif comp_name in U_VALUES and comp_name in COMPONENT_PEC_CALCULATORS:
             U_val = U_VALUES[comp_name]
-            # Area is calculated for all HXs for reporting purposes.
-            area = area_from_duty(Q_kW, U_val, lmtd_K)
+
+            # Prefer NTU-based sizing if available in comp_df
+            area_method = "LMTD"
+            area = None
+            ua_ntu = None
+            a_ntu = None
+            try:
+                if "A_NTU [m²]" in comp_df.columns:
+                    a_ntu = float(comp_df.loc[comp_name, "A_NTU [m²]"])
+                if "UA_NTU [kW/K]" in comp_df.columns:
+                    ua_ntu = float(comp_df.loc[comp_name, "UA_NTU [kW/K]"])
+            except Exception:
+                a_ntu = None
+                ua_ntu = None
+
+            if a_ntu is not None and a_ntu > 0:
+                area = a_ntu
+                area_method = "NTU"
+            elif ua_ntu is not None and ua_ntu > 0 and U_val > 0:
+                # Convert UA [kW/K] to area using U [kW/m²K]
+                area = ua_ntu / U_val
+                area_method = "NTU-UA/U"
+            else:
+                # Fallback to LMTD-based area
+                area = area_from_duty(Q_kW, U_val, lmtd_K)
+                area_method = "LMTD"
+
             pec_func = COMPONENT_PEC_CALCULATORS[comp_name]
             
             component_specific_data = {} # Initialize for all components
@@ -403,6 +428,7 @@ def evaluate_orc_economics(
             "LMTD [K]": lmtd_K,
             "U [kW/m²K]": U_val,
             "PEC [$]": pec,
+            "Area method": cost_rows.get(comp_name, {}).get("Area method", area_method) if 'area_method' in locals() else "",
             **component_specific_data # This will be empty for Condenser now
         }
 
@@ -427,7 +453,7 @@ def evaluate_orc_economics(
             "PEC [$]": pec_pump
         }
 
-    standard_columns = ["Q [kW]", "LMTD [K]", "U [kW/m²K]", "A [m²]", "W [kW]", "m_orc_for_PEC [kg/s]", "PEC [$]"]
+    standard_columns = ["Q [kW]", "LMTD [K]", "U [kW/m²K]", "A [m²]", "Area method", "W [kW]", "m_orc_for_PEC [kg/s]", "PEC [$]"]
     cost_df = pd.DataFrame.from_dict(cost_rows, orient='index')
     # Fill NaN with 0.0 for numeric columns, and empty string for potential object/string columns if any were added.
     # For now, all these standard_columns are expected to be numeric or can be filled with 0.0 if absent for a component.

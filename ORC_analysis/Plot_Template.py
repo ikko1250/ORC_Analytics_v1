@@ -45,6 +45,9 @@ def get_nan_econ_dict(T_htf_in_C, Vdot_m3s):
     }
     for comp in ["Evaporator", "Condenser", "Turbine", "Pump", "Preheater", "Superheater", "Regenerator"]:
         nan_econ[f"{comp}_cost [$]"] = np.nan
+        # Placeholders for area-related fields that may be present
+        nan_econ[f"{comp}_A [m²]"] = np.nan
+        nan_econ[f"{comp}_Area method"] = ""
     return nan_econ
 
 # --- Function to run a single ORC stage (performance and economics) (from Plot_IHIdual.py) ---
@@ -74,7 +77,11 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
             gas_composition=gas_config["default_composition"],
             P_gas=gas_config["P_gas"],
             mass_flow_mode=gas_config["mass_flow_mode"],
-            T_gas_out_min=T_cond_K + gas_config["T_gas_out_offset_K"]
+            T_gas_out_min=T_cond_K + gas_config["T_gas_out_offset_K"],
+            # NTUベース面積のためのU値（W/m²K）
+            U_preheater_W_m2K=thermo_params.get("U_pre_Wm2K", 600.0) if thermo_params else 600.0,
+            U_evaporator_W_m2K=thermo_params.get("U_evap_Wm2K", 600.0) if thermo_params else 600.0,
+            U_superheater_W_m2K=thermo_params.get("U_super_Wm2K", 600.0) if thermo_params else 600.0,
         )
     elif heat_source_type == "wet_steam" and wet_steam_config is not None:
         # 湿り蒸気熱源の場合
@@ -94,6 +101,10 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
             quality=wet_steam_config["quality"],
             quality_out=wet_steam_config.get("quality_out", 0.0),
             mass_flow_mode=wet_steam_config["mass_flow_mode"],
+            # NTUベース面積のためのU値（W/m²K）
+            U_preheater_W_m2K=thermo_params.get("U_pre_Wm2K", 600.0) if thermo_params else 600.0,
+            U_evaporator_W_m2K=thermo_params.get("U_evap_Wm2K", 600.0) if thermo_params else 600.0,
+            U_superheater_W_m2K=thermo_params.get("U_super_Wm2K", 600.0) if thermo_params else 600.0,
         )
     else:  # liquid (デフォルト動作)
         perf_res = calculate_orc_performance_from_heat_source(
@@ -106,7 +117,11 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
             fluid_htf=htf_fluid, 
             superheat_C=sc_C, 
             pinch_delta_K=pinch_K,
-            use_detailed_hex=True  # 詳細計算を有効化
+            use_detailed_hex=True,  # 詳細計算を有効化
+            # NTUベース面積のためのU値（W/m²K）
+            U_preheater_W_m2K=thermo_params.get("U_pre_Wm2K", 600.0) if thermo_params else 600.0,
+            U_evaporator_W_m2K=thermo_params.get("U_evap_Wm2K", 600.0) if thermo_params else 600.0,
+            U_superheater_W_m2K=thermo_params.get("U_super_Wm2K", 600.0) if thermo_params else 600.0,
         )
     T_htf_in_C = T_htf_in_K - 273.15
     if perf_res is None:
@@ -163,7 +178,13 @@ def run_single_orc_stage(T_htf_in_K, Vdot_m3s, T_cond_K, eta_pump_val, eta_turb_
         econ_res_dict["CRF [-]"] = econ_eval["summary"]["CRF [-]"]
         for comp in ["Evaporator", "Condenser", "Turbine", "Pump", "Preheater", "Superheater", "Regenerator"]:
             if comp in econ_eval["component_costs"].index:
-                econ_res_dict[f"{comp}_cost [$]"] = econ_eval["component_costs"].loc[comp, "PEC [$]"]
+                comp_row = econ_eval["component_costs"].loc[comp]
+                econ_res_dict[f"{comp}_cost [$]"] = comp_row.get("PEC [$]", np.nan)
+                # 追加: 面積と面積決定手法（NTU/LMTD）の記録（存在する場合）
+                if "A [m²]" in comp_row.index:
+                    econ_res_dict[f"{comp}_A [m²]"] = comp_row["A [m²]"]
+                if "Area method" in comp_row.index:
+                    econ_res_dict[f"{comp}_Area method"] = comp_row["Area method"]
     except Exception as e:
         print(f"Error in economic calculation for T_htf_in={perf_res['T_htf_in [°C]']:.1f}°C: {e}")
     return perf_res, econ_res_dict
@@ -178,6 +199,10 @@ config = {
         "eta_turb": 0.80,
         "fluid_orc": DEFAULT_FLUID,
         "fluid_htf": "Water",
+        # NTU面積出力用のU値（W/m²K）
+        "U_pre_Wm2K": 600.0,
+        "U_evap_Wm2K": 600.0,
+        "U_super_Wm2K": 600.0,
         
         # ガス熱源用の高温対応作動流体設定
         "gas_fluid_orc": "Toluene",  # ガス熱源用（高温対応）
@@ -185,7 +210,7 @@ config = {
         "pinch_delta_K": 5.0, # ピンチデルタ
         
         # 新規追加：熱源タイプ選択
-        "heat_source_type": "liquid",  # "liquid", "gas", または "wet_steam"
+        "heat_source_type": "wet_steam",  # "liquid", "gas", または "wet_steam"
     },
     "economic_params": {
         "interest_rate": 0.05,  # 金利 (5%)
